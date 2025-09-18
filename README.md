@@ -83,8 +83,17 @@ At least one optimizer is required.
 ## Document (English/Japanese)
 [CrySPY document](https://tomoki-yamashita.github.io/CrySPY_doc "CrySPY documment")
 
-## CrySPY Utility
+## CrySPY Tools
+
+### CrySPY Utility
 [CrySPY Utility](https://github.com/Tomoki-YAMASHITA/CrySPY_utility "CrySPY Utility")
+
+### Molecular Crystal Generator
+CrySPY includes a molecular crystal generation tool:
+- **cryspy-mol-crystal**: Generate optimized molecular crystal CIF files from molecular xyz coordinates
+- Supports single and multiple molecule types
+- Uses pyxtal for crystal generation and ASE for structure optimization
+- See `docs/cryspy_mol_crystal_README.md` for detailed usage
 
 ## Reference
 ### CrySPY (software)
