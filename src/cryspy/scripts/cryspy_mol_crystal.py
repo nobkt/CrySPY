@@ -59,7 +59,7 @@ def parse_args():
         '--spgnum',
         type=int,
         nargs='+',
-        default=[1, 2, 3, 4, 5, 14, 15, 19, 29, 33, 61, 62],
+        default=[1, 2, 3, 4, 5, 11, 14, 15, 19, 20, 29, 33, 36, 60, 61, 62],
         help='空間群番号のリスト (default: 一般的な分子結晶の空間群)'
     )
     parser.add_argument(
@@ -102,6 +102,11 @@ def parse_args():
         action='store_true',
         help='デバッグモード'
     )
+    parser.add_argument(
+        '--optimize-density',
+        action='store_true',
+        help='全ての対称性を試して最も密度が高い構造を選択'
+    )
     
     return parser.parse_args()
 
@@ -127,6 +132,115 @@ def load_molecules(xyz_files):
     logger.info(f"原子種: {atype}")
     
     return molecules, atype
+
+
+def generate_molecular_crystal_all_symmetries(molecules, atype, nmol, spgnum, vol_factor, mindist_factor, max_attempts_per_spg=10):
+    """Generate molecular crystal structures for all space groups and return the one with highest density."""
+    
+    # Set minimum distances
+    if len(atype) == 1:
+        mindist = ((2.0,),)  # 単原子種の場合
+    else:
+        # 複数原子種の場合、簡単な距離マトリックスを作成
+        n_types = len(atype)
+        mindist = []
+        for i in range(n_types):
+            row = []
+            for j in range(n_types):
+                # 典型的な共有結合半径に基づく最小距離
+                if atype[i] == 'H' or atype[j] == 'H':
+                    dist = 1.5
+                elif atype[i] in ['C', 'N', 'O'] and atype[j] in ['C', 'N', 'O']:
+                    dist = 2.5
+                else:
+                    dist = 3.0
+                row.append(dist * mindist_factor)
+            mindist.append(tuple(row))
+        mindist = tuple(mindist)
+    
+    logger.info(f"最小距離設定: {mindist}")
+    
+    # Set tolerance matrix
+    tolmat = Tol_matrix(prototype="molecular")
+    
+    successful_structures = []
+    
+    # Try all space groups
+    for spg in spgnum:
+        logger.info(f"空間群 {spg} で結晶生成を試行中...")
+        
+        # Try multiple volume factors for each space group to find optimal packing
+        volume_factors = [vol_factor * factor for factor in [0.8, 0.9, 1.0, 1.1, 1.2]]
+        
+        best_density_for_spg = 0
+        best_structure_for_spg = None
+        
+        for vol_f in volume_factors:
+            attempt = 0
+            while attempt < max_attempts_per_spg:
+                try:
+                    # Create pyxtal structure
+                    crystal = pyxtal(molecular=True)
+                    crystal.from_random(
+                        dim=3,
+                        group=spg,
+                        species=molecules,
+                        numIons=nmol,
+                        factor=vol_f,
+                        conventional=False,
+                        tm=tolmat
+                    )
+                    
+                    if crystal.valid:
+                        # Convert to pymatgen structure
+                        structure = crystal.to_pymatgen()
+                        density = structure.density
+                        
+                        # Keep the best structure for this space group
+                        if density > best_density_for_spg:
+                            best_density_for_spg = density
+                            best_structure_for_spg = structure
+                        
+                        logger.debug(f"空間群 {spg}, vol_factor={vol_f:.1f}: 密度 = {density:.3f} g/cm³")
+                        break  # Success, try next volume factor
+                    else:
+                        logger.debug(f"無効な結晶構造: 空間群 {spg}, vol_factor={vol_f:.1f}, 試行 {attempt + 1}")
+                        
+                except Exception as e:
+                    logger.debug(f"結晶生成失敗 (空間群 {spg}, vol_factor={vol_f:.1f}, 試行 {attempt + 1}): {e}")
+                
+                attempt += 1
+        
+        if best_structure_for_spg is not None:
+            successful_structures.append({
+                'structure': best_structure_for_spg,
+                'space_group': spg,
+                'density': best_density_for_spg,
+                'volume': best_structure_for_spg.volume
+            })
+            logger.info(f"空間群 {spg} で最良結晶構造: 密度 = {best_density_for_spg:.3f} g/cm³")
+        else:
+            logger.warning(f"空間群 {spg} で全ての体積因子で結晶構造生成に失敗")
+    
+    if not successful_structures:
+        raise RuntimeError("全ての空間群で結晶構造生成に失敗しました")
+    
+    # Sort by density (highest first)
+    successful_structures.sort(key=lambda x: x['density'], reverse=True)
+    
+    # Log all successful structures
+    logger.info("成功した結晶構造:")
+    for i, struct_info in enumerate(successful_structures):
+        logger.info(f"  {i+1}. 空間群 {struct_info['space_group']}: "
+                   f"密度 = {struct_info['density']:.3f} g/cm³, "
+                   f"体積 = {struct_info['volume']:.2f} Å³")
+    
+    # Return structure with highest density
+    best_structure_info = successful_structures[0]
+    logger.info(f"最高密度構造を選択: 空間群 {best_structure_info['space_group']}, "
+               f"密度 = {best_structure_info['density']:.3f} g/cm³")
+    
+    return best_structure_info['structure']
 
 
 def generate_molecular_crystal(molecules, atype, nmol, spgnum, vol_factor, mindist_factor):
@@ -244,14 +358,17 @@ def write_cif(structure, output_file, structure_id=1):
         cif_writer = CifWriter(structure)
         cif_string = str(cif_writer)
         
-        # Modify the title for identification
+        # Modify the title for identification and add density info
         lines = cif_string.split('\n')
+        density = structure.density
         for i, line in enumerate(lines):
             if line.startswith('_chemical_formula_sum'):
-                lines[i] = f"_chemical_formula_sum   'Structure_{structure_id}'"
+                lines[i] = f"_chemical_formula_sum   'Structure_{structure_id}_density_{density:.3f}_g_cm3'"
                 break
         
-        cif_string = '\n'.join(lines)
+        # Add density as a comment at the beginning
+        density_comment = f"# Density: {density:.3f} g/cm³\n# Volume: {structure.volume:.2f} Å³\n"
+        cif_string = density_comment + '\n'.join(lines)
         
         # Write to file
         mode = 'w' if structure_id == 1 else 'a'
@@ -259,7 +376,7 @@ def write_cif(structure, output_file, structure_id=1):
             f.write(cif_string)
             f.write('\n')
         
-        logger.info(f"CIFファイルに書き込み完了: {output_file}")
+        logger.info(f"CIFファイルに書き込み完了: {output_file} (密度: {density:.3f} g/cm³)")
         
     except Exception as e:
         logger.error(f"CIF書き込み失敗: {e}")
@@ -293,15 +410,24 @@ def main():
         
         logger.info(f"分子数設定: {nmol}")
         
+        if args.optimize_density:
+            logger.info("密度最適化モード: 全ての対称性を試して最も密度が高い構造を選択")
+        
         # Generate structures
         for i in range(args.nstruct):
             logger.info(f"構造 {i+1}/{args.nstruct} を生成中...")
             
             # Generate initial crystal structure
-            structure = generate_molecular_crystal(
-                molecules, atype, nmol, args.spgnum, 
-                args.vol_factor, args.mindist_factor
-            )
+            if args.optimize_density:
+                structure = generate_molecular_crystal_all_symmetries(
+                    molecules, atype, nmol, args.spgnum, 
+                    args.vol_factor, args.mindist_factor
+                )
+            else:
+                structure = generate_molecular_crystal(
+                    molecules, atype, nmol, args.spgnum, 
+                    args.vol_factor, args.mindist_factor
+                )
             
             # Optimize structure if requested
             if not args.no_optimization:
