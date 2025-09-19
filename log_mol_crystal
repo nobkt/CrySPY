@@ -1,0 +1,53 @@
+[2025-09-19 02:40:21,120][cryspy_mol_crystal][INFO] 分子性結晶CIF生成スクリプトを開始
+[2025-09-19 02:40:21,121][cryspy_mol_crystal][INFO] 入力XYZファイル: ['/tmp/test_molecules/methane.xyz']
+[2025-09-19 02:40:21,121][cryspy_mol_crystal][INFO] 出力CIFファイル: /tmp/test_output.cif
+[2025-09-19 02:40:21,122][cryspy_mol_crystal][INFO] 読み込んだ分子数: 1
+[2025-09-19 02:40:21,122][cryspy_mol_crystal][INFO] 原子種: ('C', 'H')
+[2025-09-19 02:40:21,122][cryspy_mol_crystal][INFO] 分子数設定: (4,)
+[2025-09-19 02:40:21,122][cryspy_mol_crystal][INFO] 密度最適化モード: 全ての対称性を試して最も密度が高い構造を選択
+[2025-09-19 02:40:21,122][cryspy_mol_crystal][INFO] 構造最適化は無効化されます（分子構造が壊れるのを防ぐため）
+[2025-09-19 02:40:21,122][cryspy_mol_crystal][INFO] 構造 1/1 を生成中...
+[2025-09-19 02:40:21,122][cryspy_mol_crystal][INFO] 最小距離設定: ((2.0, 1.2000000000000002), (1.2000000000000002, 1.2000000000000002))
+[2025-09-19 02:40:21,124][cryspy_mol_crystal][INFO] 空間群 1 で結晶生成を試行中...
+[2025-09-19 02:40:21,235][cryspy_mol_crystal][INFO] 空間群 1 で結晶構造生成成功: 密度 = 0.473 g/cm³, vol_factor=0.88
+[2025-09-19 02:40:21,235][cryspy_mol_crystal][INFO] 空間群 2 で結晶生成を試行中...
+[2025-09-19 02:40:21,351][cryspy_mol_crystal][INFO] 空間群 2 で結晶構造生成成功: 密度 = 0.473 g/cm³, vol_factor=0.88
+[2025-09-19 02:40:21,351][cryspy_mol_crystal][INFO] 空間群 14 で結晶生成を試行中...
+[2025-09-19 02:40:21,413][cryspy_mol_crystal][INFO] 空間群 14 で結晶構造生成成功: 密度 = 0.430 g/cm³, vol_factor=0.97
+[2025-09-19 02:40:21,413][cryspy_mol_crystal][INFO] 空間群 15 で結晶生成を試行中...
+[2025-09-19 02:40:21,488][cryspy_mol_crystal][INFO] 空間群 15 で結晶構造生成成功: 密度 = 0.430 g/cm³, vol_factor=0.97
+[2025-09-19 02:40:21,488][cryspy_mol_crystal][INFO] 成功した結晶構造:
+[2025-09-19 02:40:21,488][cryspy_mol_crystal][INFO]   1. 空間群 1: 密度 = 0.473 g/cm³, 体積 = 225.29 Å³, vol_factor = 0.88
+[2025-09-19 02:40:21,488][cryspy_mol_crystal][INFO]   2. 空間群 2: 密度 = 0.473 g/cm³, 体積 = 225.29 Å³, vol_factor = 0.88
+[2025-09-19 02:40:21,489][cryspy_mol_crystal][INFO]   3. 空間群 15: 密度 = 0.430 g/cm³, 体積 = 495.64 Å³, vol_factor = 0.97
+[2025-09-19 02:40:21,489][cryspy_mol_crystal][INFO]   4. 空間群 14: 密度 = 0.430 g/cm³, 体積 = 247.82 Å³, vol_factor = 0.97
+[2025-09-19 02:40:21,489][cryspy_mol_crystal][INFO] 最高密度構造を選択: 空間群 1, 密度 = 0.473 g/cm³
+[2025-09-19 02:40:21,489][cryspy_mol_crystal][INFO] 密度最適化モードのため構造最適化をスキップ
+[2025-09-19 02:40:21,490][cryspy_mol_crystal][INFO] CIFファイルに書き込み完了: /tmp/test_output.cif (密度: 0.473 g/cm³)
+[2025-09-19 02:40:21,490][cryspy_mol_crystal][INFO] 全ての構造生成が完了しました: /tmp/test_output.cif
+[2025-09-19 02:40:33,061][cryspy_mol_crystal][INFO] 分子性結晶CIF生成スクリプトを開始
+[2025-09-19 02:40:33,061][cryspy_mol_crystal][INFO] 入力XYZファイル: ['/tmp/test_molecules/methane.xyz']
+[2025-09-19 02:40:33,061][cryspy_mol_crystal][INFO] 出力CIFファイル: /tmp/test_output2.cif
+[2025-09-19 02:40:33,062][cryspy_mol_crystal][INFO] 読み込んだ分子数: 1
+[2025-09-19 02:40:33,062][cryspy_mol_crystal][INFO] 原子種: ('C', 'H')
+[2025-09-19 02:40:33,062][cryspy_mol_crystal][INFO] 分子数設定: (4,)
+[2025-09-19 02:40:33,062][cryspy_mol_crystal][INFO] 密度最適化モード: 全ての対称性を試して最も密度が高い構造を選択
+[2025-09-19 02:40:33,062][cryspy_mol_crystal][INFO] 構造最適化は無効化されます（分子構造が壊れるのを防ぐため）
+[2025-09-19 02:40:33,062][cryspy_mol_crystal][INFO] 構造 1/1 を生成中...
+[2025-09-19 02:40:33,062][cryspy_mol_crystal][INFO] 最小距離設定: ((2.0, 1.2000000000000002), (1.2000000000000002, 1.2000000000000002))
+[2025-09-19 02:40:33,064][cryspy_mol_crystal][INFO] 空間群 1 で結晶生成を試行中...
+[2025-09-19 02:40:33,178][cryspy_mol_crystal][INFO] 空間群 1 で結晶構造生成成功: 密度 = 0.473 g/cm³, vol_factor=0.88
+[2025-09-19 02:40:33,178][cryspy_mol_crystal][INFO] 空間群 2 で結晶生成を試行中...
+[2025-09-19 02:40:33,281][cryspy_mol_crystal][INFO] 空間群 2 で結晶構造生成成功: 密度 = 0.473 g/cm³, vol_factor=0.88
+[2025-09-19 02:40:33,281][cryspy_mol_crystal][INFO] 空間群 14 で結晶生成を試行中...
+[2025-09-19 02:40:33,341][cryspy_mol_crystal][INFO] 空間群 14 で結晶構造生成成功: 密度 = 0.430 g/cm³, vol_factor=0.97
+[2025-09-19 02:40:33,341][cryspy_mol_crystal][INFO] 空間群 15 で結晶生成を試行中...
+[2025-09-19 02:40:33,425][cryspy_mol_crystal][INFO] 空間群 15 で結晶構造生成成功: 密度 = 0.430 g/cm³, vol_factor=0.97
+[2025-09-19 02:40:33,425][cryspy_mol_crystal][INFO] 空間群 19 で結晶生成を試行中...
+[2025-09-19 02:40:33,452][cryspy_mol_crystal][INFO] 空間群 19 で結晶構造生成成功: 密度 = 0.394 g/cm³, vol_factor=1.06
+[2025-09-19 02:40:33,452][cryspy_mol_crystal][INFO] 空間群 61 で結晶生成を試行中...
+[2025-09-19 02:40:35,227][cryspy_mol_crystal][INFO] 空間群 62 で結晶生成を試行中...
+[2025-09-19 02:40:35,281][cryspy_mol_crystal][INFO] 空間群 62 で結晶構造生成成功: 密度 = 0.394 g/cm³, vol_factor=1.06
+[2025-09-19 02:40:35,281][cryspy_mol_crystal][INFO] 空間群 142 で結晶生成を試行中...
+[2025-09-19 02:40:35,342][cryspy_mol_crystal][INFO] 空間群 142 で結晶構造生成成功: 密度 = 0.364 g/cm³, vol_factor=1.14
+[2025-09-19 02:40:35,342][cryspy_mol_crystal][INFO] 空間群 143 で結晶生成を試行中...

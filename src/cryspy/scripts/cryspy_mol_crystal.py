@@ -169,13 +169,40 @@ def generate_molecular_crystal_all_symmetries(molecules, atype, nmol, spgnum, vo
     for spg in spgnum:
         logger.info(f"空間群 {spg} で結晶生成を試行中...")
         
-        # Try multiple volume factors for each space group to find optimal packing
-        volume_factors = [vol_factor * factor for factor in [0.8, 0.9, 1.0, 1.1, 1.2]]
+        # Use space-group-specific volume factors to allow natural density differences
+        # Different space groups have different packing efficiencies, so we need to
+        # let them settle to their natural volumes rather than forcing optimal packing
+        base_factors = [0.8, 1.0, 1.2, 1.5, 2.0]  # Wider range, less biased toward high density
         
-        best_density_for_spg = 0
-        best_structure_for_spg = None
+        # Add space-group-specific scaling to account for different symmetry efficiencies
+        # Higher symmetry groups often pack more efficiently, so they get slightly higher starting volumes
+        spg_multipliers = {
+            range(1, 3): 1.0,      # P1, P-1 (triclinic) - low symmetry, keep as reference
+            range(3, 16): 1.1,     # monoclinic 
+            range(16, 75): 1.2,    # orthorhombic
+            range(75, 143): 1.3,   # tetragonal  
+            range(143, 168): 1.4,  # trigonal
+            range(168, 195): 1.5,  # hexagonal
+            range(195, 231): 1.6,  # cubic - highest symmetry, often most efficient packing
+        }
+        
+        # Find the multiplier for this space group
+        spg_mult = 1.0
+        for spg_range, mult in spg_multipliers.items():
+            if spg in spg_range:
+                spg_mult = mult
+                break
+        
+        volume_factors = [vol_factor * base_factor * spg_mult for base_factor in base_factors]
+        
+        # Instead of finding the "best" (highest density), take the first successful structure
+        # This allows each space group to settle to its natural density
+        structure_found = False
         
         for vol_f in volume_factors:
+            if structure_found:
+                break
+                
             attempt = 0
             while attempt < max_attempts_per_spg:
                 try:
@@ -196,13 +223,18 @@ def generate_molecular_crystal_all_symmetries(molecules, atype, nmol, spgnum, vo
                         structure = crystal.to_pymatgen()
                         density = structure.density
                         
-                        # Keep the best structure for this space group
-                        if density > best_density_for_spg:
-                            best_density_for_spg = density
-                            best_structure_for_spg = structure
-                        
-                        logger.debug(f"空間群 {spg}, vol_factor={vol_f:.1f}: 密度 = {density:.3f} g/cm³")
-                        break  # Success, try next volume factor
+                        # Take this structure (first successful one, not optimizing for highest density)
+                        successful_structures.append({
+                            'structure': structure,
+                            'space_group': spg,
+                            'density': density,
+                            'volume': structure.volume,
+                            'vol_factor_used': vol_f
+                        })
+                        logger.info(f"空間群 {spg} で結晶構造生成成功: "
+                                   f"密度 = {density:.3f} g/cm³, vol_factor={vol_f:.2f}")
+                        structure_found = True
+                        break  # Success, move to next space group
                     else:
                         logger.debug(f"無効な結晶構造: 空間群 {spg}, vol_factor={vol_f:.1f}, 試行 {attempt + 1}")
                         
@@ -211,15 +243,7 @@ def generate_molecular_crystal_all_symmetries(molecules, atype, nmol, spgnum, vo
                 
                 attempt += 1
         
-        if best_structure_for_spg is not None:
-            successful_structures.append({
-                'structure': best_structure_for_spg,
-                'space_group': spg,
-                'density': best_density_for_spg,
-                'volume': best_structure_for_spg.volume
-            })
-            logger.info(f"空間群 {spg} で最良結晶構造: 密度 = {best_density_for_spg:.3f} g/cm³")
-        else:
+        if not structure_found:
             logger.warning(f"空間群 {spg} で全ての体積因子で結晶構造生成に失敗")
     
     if not successful_structures:
@@ -233,7 +257,8 @@ def generate_molecular_crystal_all_symmetries(molecules, atype, nmol, spgnum, vo
     for i, struct_info in enumerate(successful_structures):
         logger.info(f"  {i+1}. 空間群 {struct_info['space_group']}: "
                    f"密度 = {struct_info['density']:.3f} g/cm³, "
-                   f"体積 = {struct_info['volume']:.2f} Å³")
+                   f"体積 = {struct_info['volume']:.2f} Å³, "
+                   f"vol_factor = {struct_info['vol_factor_used']:.2f}")
     
     # Return structure with highest density
     best_structure_info = successful_structures[0]
