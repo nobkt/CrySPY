@@ -59,8 +59,8 @@ def parse_args():
         '--spgnum',
         type=int,
         nargs='+',
-        default=[1, 2, 3, 4, 5, 11, 14, 15, 19, 20, 29, 33, 36, 60, 61, 62],
-        help='空間群番号のリスト (default: 一般的な分子結晶の空間群)'
+        default=[1, 2, 14, 15, 19, 61, 62, 63, 64, 65, 92, 96, 142, 143, 144, 145],
+        help='空間群番号のリスト (default: 分子性結晶でよく使われる空間群)'
     )
     parser.add_argument(
         '--vol-factor',
@@ -105,7 +105,7 @@ def parse_args():
     parser.add_argument(
         '--optimize-density',
         action='store_true',
-        help='全ての対称性を試して最も密度が高い構造を選択'
+        help='全ての分子性結晶空間群を試して最も密度が高い構造を選択（構造最適化は無効化）'
     )
     
     return parser.parse_args()
@@ -412,6 +412,7 @@ def main():
         
         if args.optimize_density:
             logger.info("密度最適化モード: 全ての対称性を試して最も密度が高い構造を選択")
+            logger.info("構造最適化は無効化されます（分子構造が壊れるのを防ぐため）")
         
         # Generate structures
         for i in range(args.nstruct):
@@ -429,13 +430,15 @@ def main():
                     args.vol_factor, args.mindist_factor
                 )
             
-            # Optimize structure if requested
-            if not args.no_optimization:
+            # Optimize structure if requested (但し、--optimize-densityが指定されている場合は無効化)
+            if not args.no_optimization and not args.optimize_density:
                 structure, energy, converged = optimize_structure(
                     structure, args.fmax, args.steps, args.calculator
                 )
                 if not converged:
                     logger.warning("構造最適化が収束しませんでした")
+            elif args.optimize_density:
+                logger.info("密度最適化モードのため構造最適化をスキップ")
             
             # Write to CIF file
             write_cif(structure, args.output, i + 1)
