@@ -51,3 +51,33 @@
 [2025-09-19 02:40:35,281][cryspy_mol_crystal][INFO] 空間群 142 で結晶生成を試行中...
 [2025-09-19 02:40:35,342][cryspy_mol_crystal][INFO] 空間群 142 で結晶構造生成成功: 密度 = 0.364 g/cm³, vol_factor=1.14
 [2025-09-19 02:40:35,342][cryspy_mol_crystal][INFO] 空間群 143 で結晶生成を試行中...
+[2025-09-19 02:44:22,884][cryspy_mol_crystal][INFO] 分子性結晶CIF生成スクリプトを開始
+[2025-09-19 02:44:22,884][cryspy_mol_crystal][INFO] 入力XYZファイル: ['/tmp/test_molecules/water.xyz']
+[2025-09-19 02:44:22,884][cryspy_mol_crystal][INFO] 出力CIFファイル: /tmp/test_water.cif
+[2025-09-19 02:44:22,885][cryspy_mol_crystal][INFO] 読み込んだ分子数: 1
+[2025-09-19 02:44:22,885][cryspy_mol_crystal][INFO] 原子種: ('H', 'O')
+[2025-09-19 02:44:22,885][cryspy_mol_crystal][INFO] 分子数設定: (4,)
+[2025-09-19 02:44:22,885][cryspy_mol_crystal][INFO] 密度最適化モード: 全ての対称性を試して最も密度が高い構造を選択
+[2025-09-19 02:44:22,885][cryspy_mol_crystal][INFO] 構造最適化は無効化されます（分子構造が壊れるのを防ぐため）
+[2025-09-19 02:44:22,885][cryspy_mol_crystal][INFO] 構造 1/1 を生成中...
+[2025-09-19 02:44:22,885][cryspy_mol_crystal][INFO] 最小距離設定: ((1.2000000000000002, 1.2000000000000002), (1.2000000000000002, 2.0))
+[2025-09-19 02:44:22,887][cryspy_mol_crystal][INFO] 空間群 1 で結晶生成を試行中...
+[2025-09-19 02:44:22,942][cryspy_mol_crystal][INFO] 空間群 1 で結晶構造生成成功: 密度 = 0.751 g/cm³, vol_factor=0.88
+[2025-09-19 02:44:22,942][cryspy_mol_crystal][INFO] 空間群 2 で結晶生成を試行中...
+[2025-09-19 02:44:22,985][cryspy_mol_crystal][INFO] 空間群 2 で結晶構造生成成功: 密度 = 0.751 g/cm³, vol_factor=0.88
+[2025-09-19 02:44:22,985][cryspy_mol_crystal][INFO] 空間群 14 で結晶生成を試行中...
+[2025-09-19 02:44:23,010][cryspy_mol_crystal][INFO] 空間群 14 で結晶構造生成成功: 密度 = 0.683 g/cm³, vol_factor=0.97
+[2025-09-19 02:44:23,010][cryspy_mol_crystal][INFO] 空間群 15 で結晶生成を試行中...
+[2025-09-19 02:44:23,067][cryspy_mol_crystal][INFO] 空間群 15 で結晶構造生成成功: 密度 = 0.683 g/cm³, vol_factor=0.97
+[2025-09-19 02:44:23,068][cryspy_mol_crystal][INFO] 空間群 19 で結晶生成を試行中...
+[2025-09-19 02:44:23,081][cryspy_mol_crystal][INFO] 空間群 19 で結晶構造生成成功: 密度 = 0.626 g/cm³, vol_factor=1.06
+[2025-09-19 02:44:23,081][cryspy_mol_crystal][INFO] 成功した結晶構造:
+[2025-09-19 02:44:23,081][cryspy_mol_crystal][INFO]   1. 空間群 1: 密度 = 0.751 g/cm³, 体積 = 159.27 Å³, vol_factor = 0.88
+[2025-09-19 02:44:23,082][cryspy_mol_crystal][INFO]   2. 空間群 2: 密度 = 0.751 g/cm³, 体積 = 159.27 Å³, vol_factor = 0.88
+[2025-09-19 02:44:23,082][cryspy_mol_crystal][INFO]   3. 空間群 14: 密度 = 0.683 g/cm³, 体積 = 175.19 Å³, vol_factor = 0.97
+[2025-09-19 02:44:23,082][cryspy_mol_crystal][INFO]   4. 空間群 15: 密度 = 0.683 g/cm³, 体積 = 350.38 Å³, vol_factor = 0.97
+[2025-09-19 02:44:23,082][cryspy_mol_crystal][INFO]   5. 空間群 19: 密度 = 0.626 g/cm³, 体積 = 191.12 Å³, vol_factor = 1.06
+[2025-09-19 02:44:23,082][cryspy_mol_crystal][INFO] 最高密度構造を選択: 空間群 1, 密度 = 0.751 g/cm³
+[2025-09-19 02:44:23,082][cryspy_mol_crystal][INFO] 密度最適化モードのため構造最適化をスキップ
+[2025-09-19 02:44:23,083][cryspy_mol_crystal][INFO] CIFファイルに書き込み完了: /tmp/test_water.cif (密度: 0.751 g/cm³)
+[2025-09-19 02:44:23,083][cryspy_mol_crystal][INFO] 全ての構造生成が完了しました: /tmp/test_water.cif
