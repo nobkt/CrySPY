@@ -23,6 +23,7 @@ from pymatgen.io.ase import AseAtomsAdaptor
 
 from cryspy.util.struc_util import get_mol_data, out_cif, set_mindist
 from cryspy.util.utility import set_logger
+from pymatgen.symmetry.analyzer import SpacegroupAnalyzer
 
 
 logger = getLogger('cryspy')
@@ -268,8 +269,21 @@ def generate_molecular_crystal_all_symmetries(molecules, atype, nmol, spgnum, vo
     return best_structure_info['structure']
 
 
-def generate_molecular_crystal(molecules, atype, nmol, spgnum, vol_factor, mindist_factor):
-    """Generate molecular crystal structure using pyxtal."""
+def generate_molecular_crystal(molecules, atype, nmol, spgnum, vol_factor, mindist_factor, max_attempts=100):
+    """Generate molecular crystal structure using pyxtal.
+    
+    Args:
+        molecules: list of pymatgen Molecule objects
+        atype: tuple of atom types
+        nmol: tuple of number of molecules per type
+        spgnum: list of space group numbers to try
+        vol_factor: volume factor for structure generation
+        mindist_factor: minimum distance factor
+        max_attempts: maximum number of attempts (default: 100)
+    
+    Returns:
+        pymatgen Structure object
+    """
     
     # Set minimum distances
     if len(atype) == 1:
@@ -299,13 +313,29 @@ def generate_molecular_crystal(molecules, atype, nmol, spgnum, vol_factor, mindi
     
     # Generate crystal structure
     attempt = 0
-    max_attempts = 100
+    failed_spgs = {}  # Track failed space groups to avoid repeating
+    last_log_attempt = 0
+    log_interval = 10  # Log every 10 attempts to reduce output
     
     while attempt < max_attempts:
         try:
             # Choose random space group
             spg = np.random.choice(spgnum)
-            logger.info(f"試行 {attempt + 1}: 空間群 {spg} で結晶生成中...")
+            
+            # Track failures per space group
+            if spg not in failed_spgs:
+                failed_spgs[spg] = 0
+            
+            # Skip space groups that failed too many times
+            if failed_spgs[spg] >= 5:
+                continue
+            
+            # Log progress less frequently
+            if attempt - last_log_attempt >= log_interval:
+                logger.info(f"試行 {attempt + 1}/{max_attempts}: 結晶生成を継続中...")
+                last_log_attempt = attempt
+            elif attempt == 0:
+                logger.info(f"試行 {attempt + 1}: 空間群 {spg} で結晶生成中...")
             
             # Create pyxtal structure
             crystal = pyxtal(molecular=True)
@@ -322,16 +352,21 @@ def generate_molecular_crystal(molecules, atype, nmol, spgnum, vol_factor, mindi
             if crystal.valid:
                 # Convert to pymatgen structure
                 structure = crystal.to_pymatgen()
-                logger.info(f"結晶構造生成成功: 空間群 {spg}")
+                logger.info(f"結晶構造生成成功: 空間群 {spg} (試行回数: {attempt + 1})")
                 return structure
             else:
-                logger.warning(f"無効な結晶構造: 空間群 {spg}")
+                failed_spgs[spg] += 1
+                logger.debug(f"無効な結晶構造: 空間群 {spg}")
                 
         except Exception as e:
-            logger.warning(f"結晶生成失敗 (空間群 {spg}): {e}")
+            failed_spgs[spg] = failed_spgs.get(spg, 0) + 1
+            logger.debug(f"結晶生成失敗 (空間群 {spg}): {e}")
         
         attempt += 1
     
+    # Log summary of failures
+    logger.warning(f"{max_attempts}回の試行後も結晶構造生成に失敗しました")
+    logger.warning(f"失敗した空間群の統計: {failed_spgs}")
     raise RuntimeError(f"{max_attempts}回の試行後も結晶構造生成に失敗しました")
 
 
@@ -408,6 +443,47 @@ def write_cif(structure, output_file, structure_id=1):
         raise
 
 
+def write_structure_info(structure, nmol, output_file, structure_id=1, symprec=0.01):
+    """Write crystal structure information to a text file.
+    
+    Args:
+        structure: pymatgen Structure object
+        nmol: tuple of number of molecules per type
+        output_file: output file name
+        structure_id: structure ID number
+        symprec: symmetry precision for space group determination
+    """
+    try:
+        # Get space group information
+        analyzer = SpacegroupAnalyzer(structure, symprec=symprec)
+        spg_symbol = analyzer.get_space_group_symbol()
+        spg_number = analyzer.get_space_group_number()
+        
+        # Get density
+        density = structure.density
+        
+        # Total number of molecules per unit cell
+        total_nmol = sum(nmol)
+        
+        # Write information
+        mode = 'w' if structure_id == 1 else 'a'
+        with open(output_file, mode) as f:
+            f.write(f"# Structure {structure_id}\n")
+            f.write(f"Number of molecules per unit cell: {total_nmol}\n")
+            f.write(f"  Molecules per type: {nmol}\n")
+            f.write(f"Space group number: {spg_number}\n")
+            f.write(f"Space group symbol: {spg_symbol}\n")
+            f.write(f"Density: {density:.4f} g/cm³\n")
+            f.write(f"Volume: {structure.volume:.4f} Å³\n")
+            f.write(f"{'='*60}\n\n")
+        
+        logger.info(f"構造情報ファイルに書き込み完了: {output_file}")
+        
+    except Exception as e:
+        logger.error(f"構造情報書き込み失敗: {e}")
+        raise
+
+
 def main():
     """Main function."""
     args = parse_args()
@@ -439,6 +515,11 @@ def main():
             logger.info("密度最適化モード: 全ての対称性を試して最も密度が高い構造を選択")
             logger.info("構造最適化は無効化されます（分子構造が壊れるのを防ぐため）")
         
+        # Determine structure info output file name
+        info_output = args.output.replace('.cif', '_info.txt')
+        if info_output == args.output:
+            info_output = args.output + '_info.txt'
+        
         # Generate structures
         for i in range(args.nstruct):
             logger.info(f"構造 {i+1}/{args.nstruct} を生成中...")
@@ -467,8 +548,12 @@ def main():
             
             # Write to CIF file
             write_cif(structure, args.output, i + 1)
+            
+            # Write structure information to text file
+            write_structure_info(structure, nmol, info_output, i + 1)
         
         logger.info(f"全ての構造生成が完了しました: {args.output}")
+        logger.info(f"構造情報ファイル: {info_output}")
         
     except Exception as e:
         logger.error(f"エラーが発生しました: {e}")
