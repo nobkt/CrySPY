@@ -229,7 +229,15 @@ def generate_molecular_crystal_all_symmetries(molecules, atype, nmol, spgnum, vo
                             )
                     
                     output = f.getvalue()
-                    if output and "Cannot generate crystal after max attempts" in output:
+                    # Check for various PyXtal failure messages (case-insensitive, partial match)
+                    pyxtal_failure_indicators = [
+                        "Cannot generate crystal after max attempts",
+                        "cannot generate crystal",
+                        "max attempts",
+                        "failed to generate",
+                    ]
+                    output_lower = output.lower() if output else ""
+                    if any(indicator.lower() in output_lower for indicator in pyxtal_failure_indicators):
                         pyxtal_fail_count += 1
                         logger.debug(f"PyXtal内部で最大試行回数に達しました (空間群 {spg}, vol_factor={vol_f:.2f}, 試行 {attempt + 1})")
                         # If PyXtal itself failed 3 times for this vol_factor, skip to next vol_factor
@@ -376,7 +384,15 @@ def generate_molecular_crystal(molecules, atype, nmol, spgnum, vol_factor, mindi
                     )
             
             output = f.getvalue()
-            if output and "Cannot generate crystal after max attempts" in output:
+            # Check for various PyXtal failure messages (case-insensitive, partial match)
+            pyxtal_failure_indicators = [
+                "Cannot generate crystal after max attempts",
+                "cannot generate crystal",
+                "max attempts",
+                "failed to generate",
+            ]
+            output_lower = output.lower() if output else ""
+            if any(indicator.lower() in output_lower for indicator in pyxtal_failure_indicators):
                 failed_spgs[spg] += 1
                 logger.debug(f"PyXtal内部で最大試行回数に達しました (空間群 {spg}, 試行 {attempt + 1})")
             
