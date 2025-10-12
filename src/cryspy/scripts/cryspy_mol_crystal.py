@@ -138,6 +138,9 @@ def load_molecules(xyz_files):
 def generate_molecular_crystal_all_symmetries(molecules, atype, nmol, spgnum, vol_factor, mindist_factor, max_attempts_per_spg=10):
     """Generate molecular crystal structures for all space groups and return the one with highest density."""
     
+    from contextlib import redirect_stdout, redirect_stderr
+    from io import StringIO
+    
     # Set minimum distances
     if len(atype) == 1:
         mindist = ((2.0,),)  # 単原子種の場合
@@ -205,19 +208,42 @@ def generate_molecular_crystal_all_symmetries(molecules, atype, nmol, spgnum, vo
                 break
                 
             attempt = 0
+            pyxtal_fail_count = 0  # Track PyXtal internal failures
             while attempt < max_attempts_per_spg:
                 try:
                     # Create pyxtal structure
                     crystal = pyxtal(molecular=True)
-                    crystal.from_random(
-                        dim=3,
-                        group=spg,
-                        species=molecules,
-                        numIons=nmol,
-                        factor=vol_f,
-                        conventional=False,
-                        tm=tolmat
-                    )
+                    
+                    # Capture stdout/stderr to detect PyXtal internal failures
+                    f = StringIO()
+                    with redirect_stdout(f):
+                        with redirect_stderr(f):
+                            crystal.from_random(
+                                dim=3,
+                                group=spg,
+                                species=molecules,
+                                numIons=nmol,
+                                factor=vol_f,
+                                conventional=False,
+                                tm=tolmat
+                            )
+                    
+                    output = f.getvalue()
+                    # Check for various PyXtal failure messages (case-insensitive, partial match)
+                    pyxtal_failure_indicators = [
+                        "Cannot generate crystal after max attempts",
+                        "cannot generate crystal",
+                        "max attempts",
+                        "failed to generate",
+                    ]
+                    output_lower = output.lower() if output else ""
+                    if any(indicator.lower() in output_lower for indicator in pyxtal_failure_indicators):
+                        pyxtal_fail_count += 1
+                        logger.debug(f"PyXtal内部で最大試行回数に達しました (空間群 {spg}, vol_factor={vol_f:.2f}, 試行 {attempt + 1})")
+                        # If PyXtal itself failed 3 times for this vol_factor, skip to next vol_factor
+                        if pyxtal_fail_count >= 3:
+                            logger.debug(f"空間群 {spg} (vol_factor={vol_f:.2f}) をスキップ - PyXtal内部失敗が多すぎます")
+                            break  # Break to try next volume factor
                     
                     if crystal.valid:
                         # Convert to pymatgen structure
@@ -285,6 +311,9 @@ def generate_molecular_crystal(molecules, atype, nmol, spgnum, vol_factor, mindi
         pymatgen Structure object
     """
     
+    from contextlib import redirect_stdout, redirect_stderr
+    from io import StringIO
+    
     # Set minimum distances
     if len(atype) == 1:
         mindist = ((2.0,),)  # 単原子種の場合
@@ -339,15 +368,33 @@ def generate_molecular_crystal(molecules, atype, nmol, spgnum, vol_factor, mindi
             
             # Create pyxtal structure
             crystal = pyxtal(molecular=True)
-            crystal.from_random(
-                dim=3,
-                group=spg,
-                species=molecules,
-                numIons=nmol,
-                factor=vol_factor,
-                conventional=False,
-                tm=tolmat
-            )
+            
+            # Capture stdout/stderr to detect PyXtal internal failures
+            f = StringIO()
+            with redirect_stdout(f):
+                with redirect_stderr(f):
+                    crystal.from_random(
+                        dim=3,
+                        group=spg,
+                        species=molecules,
+                        numIons=nmol,
+                        factor=vol_factor,
+                        conventional=False,
+                        tm=tolmat
+                    )
+            
+            output = f.getvalue()
+            # Check for various PyXtal failure messages (case-insensitive, partial match)
+            pyxtal_failure_indicators = [
+                "Cannot generate crystal after max attempts",
+                "cannot generate crystal",
+                "max attempts",
+                "failed to generate",
+            ]
+            output_lower = output.lower() if output else ""
+            if any(indicator.lower() in output_lower for indicator in pyxtal_failure_indicators):
+                failed_spgs[spg] += 1
+                logger.debug(f"PyXtal内部で最大試行回数に達しました (空間群 {spg}, 試行 {attempt + 1})")
             
             if crystal.valid:
                 # Convert to pymatgen structure
