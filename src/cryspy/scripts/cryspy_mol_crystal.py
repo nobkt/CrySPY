@@ -458,11 +458,18 @@ def optimize_structure(structure, fmax=0.05, steps=1000, calculator='EMT'):
         return structure, np.nan, False
 
 
-def write_cif(structure, output_file, structure_id=1):
-    """Write structure to CIF file."""
+def write_cif(structure, output_file, structure_id=1, symprec=0.01):
+    """Write structure to CIF file.
+    
+    Args:
+        structure: pymatgen Structure object
+        output_file: output file name
+        structure_id: structure ID number
+        symprec: symmetry precision for space group determination
+    """
     try:
-        # Use pymatgen CifWriter
-        cif_writer = CifWriter(structure)
+        # Use pymatgen CifWriter with symprec to preserve space group symmetry
+        cif_writer = CifWriter(structure, symprec=symprec)
         cif_string = str(cif_writer)
         
         # Modify the title for identification and add density info
