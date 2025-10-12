@@ -38,6 +38,7 @@ def gen_struc(
         ll_nat=None,
         ul_nat=None,
         cn_comb=None,
+        maxcnt=100,
     ):
     '''
     Generate random structures for given space groups
@@ -62,6 +63,7 @@ def gen_struc(
     ll_nat (tuple): lower limit of number of atoms (e.g. (0, 0))
     ul_nat (tuple): upper limit of number of atoms (e.g. (8, 8))
     cn_comb (np.array): charge neutral combinations of atoms
+    maxcnt (int): maximum total attempts per structure (default: 100)
 
     # ---------- return
     init_struc_data (dict): {ID: pymatgen Structure, ...}
@@ -76,76 +78,100 @@ def gen_struc(
 
     # ---------- loop for structure generation
     while len(init_struc_data) < nstruc:
-        # ------ spgnum --> spg
-        if spgnum == 'all':
-            spg = random.randint(1, 230)
-        else:
-            spg = random.choice(spgnum)
-        # ------ generate structure
-        tmp_crystal = pyxtal()
-        if vc:    # variable composition
-            if cn_comb is None:
-                nat = tuple([random.randint(l, u) for l, u in zip(ll_nat, ul_nat)])
+        cnt = 0  # attempt counter per structure
+        spg_fail_count = {}  # track failures per space group
+        
+        # ------ inner loop for retry
+        while cnt < maxcnt:
+            cnt += 1
+            # ------ spgnum --> spg
+            if spgnum == 'all':
+                spg = random.randint(1, 230)
             else:
-                nat = tuple(cn_comb[np.random.choice(len(cn_comb))])
-            if sum(nat) == 0:
-                continue    # restart
-            if 0 in nat:    # remove 0 from numIons and corresponding index in atype, mindist
-                tmp_atype, tmp_nat, tmp_mindist = remove_zero(atype, nat, mindist)
-                tolmat = _set_tol_mat(tmp_atype, tmp_mindist)
-            else:
-                tmp_nat = tuple(nat)
-                tmp_atype = atype
-                tolmat = _set_tol_mat(tmp_atype, mindist)
-        try:
-            f = StringIO()    # to get output from pyxtal
-            with redirect_stdout(f):
-                tmp_crystal.from_random(
-                    dim=3,
-                    group=spg,
-                    species=tmp_atype,
-                    numIons=tmp_nat,
-                    factor=vol_factor,
-                    conventional=False,
-                    tm=tolmat,
-                )
-            s = f.getvalue().rstrip()    # to delete \n
-            if s:
-                logger.warning(s)
-        except Exception as e:
-            logger.warning(f'{e}:     spg = {spg} retry.')
-            continue
-        if tmp_crystal.valid:
-            tmp_struc = tmp_crystal.to_pymatgen(resort=False)
-            tmp2_nat = get_nat(tmp_struc, tmp_atype)
-            # -- check the number of atoms
-            if tmp2_nat != tmp_nat:
-                # (pyxtal 0.1.4) cryspy adopts "conventional=False",
-                #     which is better for DFT calculation
-                # pyxtal returns conventional cell, that is, too many atoms
-                tmp_struc = tmp_struc.get_primitive_structure()
-                # recheck nat
-                tmp2_nat = get_nat(tmp_struc, tmp_atype)
-                if tmp2_nat != tmp_nat:    # failure
-                    continue
-            # -- sort, just in case
-            tmp_struc = sort_by_atype(tmp_struc, tmp_atype)
-            # -- scale volume
-            if vol_mu is not None:
-                vol = random.gauss(mu=vol_mu, sigma=vol_sigma)
-                tmp_struc.scale_lattice(volume=vol)
-            # -- check actual space group
+                spg = random.choice(spgnum)
+            
+            # Skip space groups that failed too many times (> 10)
+            if spg_fail_count.get(spg, 0) > 10:
+                continue
+                
+            # ------ generate structure
+            tmp_crystal = pyxtal()
+            if vc:    # variable composition
+                if cn_comb is None:
+                    nat = tuple([random.randint(l, u) for l, u in zip(ll_nat, ul_nat)])
+                else:
+                    nat = tuple(cn_comb[np.random.choice(len(cn_comb))])
+                if sum(nat) == 0:
+                    continue    # restart
+                if 0 in nat:    # remove 0 from numIons and corresponding index in atype, mindist
+                    tmp_atype, tmp_nat, tmp_mindist = remove_zero(atype, nat, mindist)
+                    tolmat = _set_tol_mat(tmp_atype, tmp_mindist)
+                else:
+                    tmp_nat = tuple(nat)
+                    tmp_atype = atype
+                    tolmat = _set_tol_mat(tmp_atype, mindist)
             try:
-                spg_sym, spg_num = tmp_struc.get_space_group_info(
-                    symprec=symprec)
-            except TypeError:
-                spg_num = 0
-                spg_sym = None
-            # -- tmp_struc --> init_struc_data
-            cid = len(init_struc_data) + id_offset
-            init_struc_data[cid] = tmp_struc
-            logger.info(f'Structure ID {cid:>6}: {nat}'
-                    f' Space group: {spg:>3} --> {spg_num:>3} {spg_sym}')
+                f = StringIO()    # to get output from pyxtal
+                with redirect_stdout(f):
+                    tmp_crystal.from_random(
+                        dim=3,
+                        group=spg,
+                        species=tmp_atype,
+                        numIons=tmp_nat,
+                        factor=vol_factor,
+                        conventional=False,
+                        tm=tolmat,
+                    )
+                s = f.getvalue().rstrip()    # to delete \n
+                if s:
+                    logger.warning(s)
+            except Exception as e:
+                logger.warning(f'{e}:     spg = {spg} retry.')
+                spg_fail_count[spg] = spg_fail_count.get(spg, 0) + 1
+                continue
+            if tmp_crystal.valid:
+                tmp_struc = tmp_crystal.to_pymatgen(resort=False)
+                tmp2_nat = get_nat(tmp_struc, tmp_atype)
+                # -- check the number of atoms
+                if tmp2_nat != tmp_nat:
+                    # (pyxtal 0.1.4) cryspy adopts "conventional=False",
+                    #     which is better for DFT calculation
+                    # pyxtal returns conventional cell, that is, too many atoms
+                    tmp_struc = tmp_struc.get_primitive_structure()
+                    # recheck nat
+                    tmp2_nat = get_nat(tmp_struc, tmp_atype)
+                    if tmp2_nat != tmp_nat:    # failure
+                        spg_fail_count[spg] = spg_fail_count.get(spg, 0) + 1
+                        continue
+                # -- sort, just in case
+                tmp_struc = sort_by_atype(tmp_struc, tmp_atype)
+                # -- scale volume
+                if vol_mu is not None:
+                    vol = random.gauss(mu=vol_mu, sigma=vol_sigma)
+                    tmp_struc.scale_lattice(volume=vol)
+                # -- check actual space group
+                try:
+                    spg_sym, spg_num = tmp_struc.get_space_group_info(
+                        symprec=symprec)
+                except TypeError:
+                    spg_num = 0
+                    spg_sym = None
+                # -- tmp_struc --> init_struc_data
+                cid = len(init_struc_data) + id_offset
+                init_struc_data[cid] = tmp_struc
+                logger.info(f'Structure ID {cid:>6}: {nat}'
+                        f' Space group: {spg:>3} --> {spg_num:>3} {spg_sym}')
+                break  # success, exit inner retry loop
+            else:
+                # crystal is not valid
+                spg_fail_count[spg] = spg_fail_count.get(spg, 0) + 1
+        
+        # Check if we've exceeded max attempts
+        if cnt >= maxcnt:
+            logger.error(f'Reached maximum attempts ({maxcnt}) without generating a valid structure.')
+            logger.error(f'Space group failure counts: {spg_fail_count}')
+            raise RuntimeError(f'Cannot generate structure after {maxcnt} attempts. '
+                             f'Consider adjusting vol_factor, mindist, or space group selection.')
 
     # ---------- return
     return init_struc_data
@@ -165,6 +191,7 @@ def gen_struc_mol(
         vol_mu=None,
         vol_sigma=None,
         timeout_mol=None,
+        maxcnt=100,
     ):
     '''
     Generate random molecular crystal structures for given space groups
@@ -185,6 +212,7 @@ def gen_struc_mol(
     vol_mu (float): mean for volume scaling
     vol_sigma (float): standard deviation for volume scaling
     timeout_mol (None or float): if float, timeout for molecular structure generation
+    maxcnt (int): maximum total attempts per structure (default: 100)
 
     # ---------- return
     init_struc_data (dict): {ID: pymatgen Structure, ...}
@@ -200,35 +228,47 @@ def gen_struc_mol(
 
     # ---------- loop for structure generattion
     while len(init_struc_data) < nstruc:
-        # ------ spgnum --> spg
-        if spgnum == 'all':
-            spg = random.randint(1, 230)
-        else:
-            spg = random.choice(spgnum)
-        # ------ generate structure
-        if timeout_mol is None:
-            tmp_crystal = pyxtal(molecular=True)
-            try:
-                f = StringIO()    # to get output from pyxtal
-                with redirect_stdout(f):
-                    tmp_crystal.from_random(
-                        dim=3,
-                        group=spg,
-                        species=mol_data,
-                        numIons=nmol,
-                        factor=vol_factor,
-                        conventional=False,
-                        tm=tolmat
-                    )
-                s = f.getvalue().rstrip()    # to delete \n
-                if s:
-                    logger.warning(s)
-                tmp_valid = tmp_crystal.valid
-                if tmp_valid:
-                    tmp_struc = tmp_crystal.to_pymatgen(resort=False)
-            except Exception as e:
-                logger.warning(f'{e}:     spg = {spg} retry.')
+        cnt = 0  # attempt counter per structure
+        spg_fail_count = {}  # track failures per space group
+        
+        # ------ inner loop for retry
+        while cnt < maxcnt:
+            cnt += 1
+            # ------ spgnum --> spg
+            if spgnum == 'all':
+                spg = random.randint(1, 230)
+            else:
+                spg = random.choice(spgnum)
+            
+            # Skip space groups that failed too many times (> 10)
+            if spg_fail_count.get(spg, 0) > 10:
                 continue
+                
+            # ------ generate structure
+            if timeout_mol is None:
+                tmp_crystal = pyxtal(molecular=True)
+                try:
+                    f = StringIO()    # to get output from pyxtal
+                    with redirect_stdout(f):
+                        tmp_crystal.from_random(
+                            dim=3,
+                            group=spg,
+                            species=mol_data,
+                            numIons=nmol,
+                            factor=vol_factor,
+                            conventional=False,
+                            tm=tolmat
+                        )
+                    s = f.getvalue().rstrip()    # to delete \n
+                    if s:
+                        logger.warning(s)
+                    tmp_valid = tmp_crystal.valid
+                    if tmp_valid:
+                        tmp_struc = tmp_crystal.to_pymatgen(resort=False)
+                except Exception as e:
+                    logger.warning(f'{e}:     spg = {spg} retry.')
+                    spg_fail_count[spg] = spg_fail_count.get(spg, 0) + 1
+                    continue
             # if algo in ['EA', 'EA-vc']:
             #     tmp_struc = tmp_crystal.to_pymatgen(resort=False)
             #     tmp_lattice = tmp_struc.lattice
@@ -270,6 +310,7 @@ def gen_struc_mol(
                 p.close()
             if q.empty():
                 logger.warning('timeout for molecular structure generation. retry.')
+                spg_fail_count[spg] = spg_fail_count.get(spg, 0) + 1
                 continue
             else:
                 # -- get struc data from _mp_mc
@@ -286,6 +327,7 @@ def gen_struc_mol(
                 if tmp_struc == 'error':
                     # in case of 'error', tmp_valid <-- error message (Exception)
                     logger.warning(tmp_valid.args[0] + f': spg = {spg} retry.')
+                    spg_fail_count[spg] = spg_fail_count.get(spg, 0) + 1
                     continue
         if tmp_valid:
             # -- scale volume
@@ -295,6 +337,7 @@ def gen_struc_mol(
                 tmp_struc = scale_cell_mol(tmp_struc, mol_data, vol)
                 if not tmp_struc:    # case: scale_cell_mol returns False
                     logger.warning('failed scale cell. retry.')
+                    spg_fail_count[spg] = spg_fail_count.get(spg, 0) + 1
                     continue
             # -- check nat
             tmp_nat = get_nat(tmp_struc, atype)
@@ -307,6 +350,7 @@ def gen_struc_mol(
                 tmp_nat = get_nat(tmp_struc, atype)
                 if tmp_nat != nat:    # failure
                     logger.warning(f'different num. of atoms. {tmp_nat}, {nat} retry.')
+                    spg_fail_count[spg] = spg_fail_count.get(spg, 0) + 1
                     continue
             # -- grouping atoms for molecule using interatomic distance
             # if rin.algo in ['EA', 'EA-vc']:
@@ -383,6 +427,17 @@ def gen_struc_mol(
             #     struc_mol_id.update({cid: [tmp_mol_indx, tmp_id, mol_dists]})
             logger.info(f'Structure ID {cid:>6} was generated.'
                     f' Space group: {spg:>3} --> {spg_num:>3} {spg_sym}')
+            break  # success, exit inner retry loop
+        else:
+            # crystal is not valid
+            spg_fail_count[spg] = spg_fail_count.get(spg, 0) + 1
+        
+        # Check if we've exceeded max attempts
+        if cnt >= maxcnt:
+            logger.error(f'Reached maximum attempts ({maxcnt}) without generating a valid structure.')
+            logger.error(f'Space group failure counts: {spg_fail_count}')
+            raise RuntimeError(f'Cannot generate structure after {maxcnt} attempts. '
+                             f'Consider adjusting vol_factor, mindist, timeout_mol, or space group selection.')
 
     # ---------- return
     #            struc_mol_id is not implemented yet, just return vacant dict for now
@@ -405,6 +460,7 @@ def gen_struc_mol_break_sym(
         vol_sigma=None,
         rot_mol='random_wyckoff',
         nrot=20,
+        maxcnt=100,
     ):
     '''
     Generate random molecular crystal structures
@@ -428,6 +484,7 @@ def gen_struc_mol_break_sym(
     vol_sigma (float): standard deviation for volume scaling
     rot_mol (str): rotation option. 'random', 'random_mol', or 'random_wyckoff'
     nrot (int): maximum number of trials to rotate molecules
+    maxcnt (int): maximum total attempts per structure (default: 100)
 
     # ---------- return
     init_struc_data (dict): {ID: pymatgen Structure, ...}
@@ -446,31 +503,43 @@ def gen_struc_mol_break_sym(
 
     # ---------- loop for structure generattion
     while len(init_struc_data) < nstruc:
-        # ------ spgnum --> spg
-        if spgnum == 'all':
-            spg = random.randint(1, 230)
-        else:
-            spg = random.choice(spgnum)
-        # ------ generate structure
-        tmp_crystal = pyxtal()
-        try:
-            f = StringIO()
-            with redirect_stdout(f):
-                tmp_crystal.from_random(
-                    dim=3,
-                    group=spg,
-                    species=atype_dummy,
-                    numIons=nmol,
-                    factor=vol_factor,
-                    conventional=False,
-                    tm=tolmat
-                )
-            s = f.getvalue().rstrip()    # to delete \n
-            if s:
-                logger.warning(s)
-        except Exception as e:
-            logger.warning(f'{e}:    spg = {spg} retry.')
-            continue
+        cnt = 0  # attempt counter per structure
+        spg_fail_count = {}  # track failures per space group
+        
+        # ------ inner loop for retry
+        while cnt < maxcnt:
+            cnt += 1
+            # ------ spgnum --> spg
+            if spgnum == 'all':
+                spg = random.randint(1, 230)
+            else:
+                spg = random.choice(spgnum)
+            
+            # Skip space groups that failed too many times (> 10)
+            if spg_fail_count.get(spg, 0) > 10:
+                continue
+                
+            # ------ generate structure
+            tmp_crystal = pyxtal()
+            try:
+                f = StringIO()
+                with redirect_stdout(f):
+                    tmp_crystal.from_random(
+                        dim=3,
+                        group=spg,
+                        species=atype_dummy,
+                        numIons=nmol,
+                        factor=vol_factor,
+                        conventional=False,
+                        tm=tolmat
+                    )
+                s = f.getvalue().rstrip()    # to delete \n
+                if s:
+                    logger.warning(s)
+            except Exception as e:
+                logger.warning(f'{e}:    spg = {spg} retry.')
+                spg_fail_count[spg] = spg_fail_count.get(spg, 0) + 1
+                continue
         if tmp_crystal.valid:
             # -- each wyckoff position --> dummy atom
             dums = []        # dummy atoms
@@ -585,6 +654,7 @@ def gen_struc_mol_break_sym(
                 break
             # -- reach maximum times to rotate (failure)
             if not rot_success:
+                spg_fail_count[spg] = spg_fail_count.get(spg, 0) + 1
                 continue    # go back to the while loop
             # -- tmp_struc --> init_struc_data
             cid = len(init_struc_data) + id_offset
@@ -600,6 +670,17 @@ def gen_struc_mol_break_sym(
             #     struc_mol_id.update({cid: [tmp_mol_indx, tmp_id, mol_dists]})
             logger.info(f'Structure ID {cid:>6} was generated.'
                     f' Space group: {spg:>3} --> {spg_num:>3} {spg_sym}')
+            break  # success, exit inner retry loop
+        else:
+            # crystal is not valid
+            spg_fail_count[spg] = spg_fail_count.get(spg, 0) + 1
+        
+        # Check if we've exceeded max attempts
+        if cnt >= maxcnt:
+            logger.error(f'Reached maximum attempts ({maxcnt}) without generating a valid structure.')
+            logger.error(f'Space group failure counts: {spg_fail_count}')
+            raise RuntimeError(f'Cannot generate structure after {maxcnt} attempts. '
+                             f'Consider adjusting vol_factor, mindist, nrot, or space group selection.')
 
     # ---------- return
     #            struc_mol_id is not implemented yet, just return vacant dict for now
