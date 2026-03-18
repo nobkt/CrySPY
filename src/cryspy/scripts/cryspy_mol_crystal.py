@@ -135,22 +135,32 @@ def load_molecules(xyz_files):
     return molecules, atype
 
 
-def check_intermolecular_distance(structure, molecules, nmol, min_factor=0.85):
+def check_intermolecular_distance(structure, nmol, min_factor=0.7):
     """Check that intermolecular distances are reasonable.
 
     Identifies molecules in the crystal structure using covalent bond
     connectivity, then checks that all inter-molecular atom-pair distances
     exceed a threshold derived from van der Waals radii.
 
+    Note: min_factor is a physics-based threshold for van der Waals contact
+    distances, separate from the Tol_matrix factor used during PyXtal generation.
+    The default of 0.7 allows hydrogen-bonded contacts while rejecting
+    pathological molecular overlaps.
+
     Args:
         structure: pymatgen Structure object
-        molecules: list of pymatgen Molecule objects
         nmol: tuple of number of molecules per type
-        min_factor: factor applied to van der Waals radii sum (default: 0.85)
+        min_factor: factor applied to van der Waals radii sum (default: 0.7).
+            A value of 0.7 means intermolecular distances must be at least
+            70% of the sum of van der Waals radii for the atom pair.
+            Examples with min_factor=0.7:
+              H-H threshold: 1.68 Å, O-H: 1.90 Å, C-C: 2.38 Å
 
     Returns:
         (True, min_dist) if all intermolecular distances are acceptable
         (False, min_dist) if any intermolecular distance is too short
+        (False, None) if molecules appear merged (too close to distinguish)
+        (True, None) if molecule identification failed (skipped check)
     """
     # Van der Waals radii (Å) - Bondi radii
     vdw_radii = {
@@ -161,6 +171,7 @@ def check_intermolecular_distance(structure, molecules, nmol, min_factor=0.85):
         'Cl': 1.75, 'Ar': 1.88, 'K': 2.75, 'Ca': 2.31,
         'Br': 1.85, 'I': 1.98, 'Se': 1.90,
     }
+    DEFAULT_VDW_RADIUS = 1.70  # Å, carbon's van der Waals radius as fallback
 
     # Covalent radii (Å) for bond identification
     covalent_radii = {
@@ -171,21 +182,22 @@ def check_intermolecular_distance(structure, molecules, nmol, min_factor=0.85):
         'Cl': 1.02, 'Ar': 1.06, 'K': 2.03, 'Ca': 1.76,
         'Br': 1.20, 'I': 1.39, 'Se': 1.20,
     }
+    DEFAULT_COVALENT_RADIUS = 0.77  # Å, close to carbon's covalent radius as fallback
+    BOND_TOLERANCE = 1.3  # factor for covalent bond length identification
 
     n = structure.num_sites
 
     # Identify molecules using covalent bond connectivity
     # Build adjacency list based on covalent bond distances
-    bond_tolerance = 1.3  # tolerance factor for covalent bond length
     adj = [[] for _ in range(n)]
     dist_cache = {}
     for i in range(n):
         for j in range(i):
             dist = structure.get_distance(i, j)
             dist_cache[(i, j)] = dist
-            r_i = covalent_radii.get(structure[i].species_string, 0.77)
-            r_j = covalent_radii.get(structure[j].species_string, 0.77)
-            max_bond = (r_i + r_j) * bond_tolerance
+            r_i = covalent_radii.get(structure[i].species_string, DEFAULT_COVALENT_RADIUS)
+            r_j = covalent_radii.get(structure[j].species_string, DEFAULT_COVALENT_RADIUS)
+            max_bond = (r_i + r_j) * BOND_TOLERANCE
             if dist < max_bond:
                 adj[i].append(j)
                 adj[j].append(i)
@@ -228,8 +240,8 @@ def check_intermolecular_distance(structure, molecules, nmol, min_factor=0.85):
                 dist = dist_cache[(i, j)]
                 sym_i = structure[i].species_string
                 sym_j = structure[j].species_string
-                r_i = vdw_radii.get(sym_i, 1.70)
-                r_j = vdw_radii.get(sym_j, 1.70)
+                r_i = vdw_radii.get(sym_i, DEFAULT_VDW_RADIUS)
+                r_j = vdw_radii.get(sym_j, DEFAULT_VDW_RADIUS)
                 min_vdw_dist = (r_i + r_j) * min_factor
                 if dist < min_vdw_dist:
                     logger.debug(f"分子間距離が短すぎます: {sym_i}-{sym_j} = {dist:.3f} Å "
@@ -317,7 +329,7 @@ def generate_molecular_crystal_all_symmetries(molecules, atype, nmol, spgnum, vo
 
                         # Post-generation intermolecular distance check
                         dist_ok, min_dist = check_intermolecular_distance(
-                            structure, molecules, nmol
+                            structure, nmol
                         )
                         if not dist_ok:
                             if min_dist is not None:
@@ -468,7 +480,7 @@ def generate_molecular_crystal(molecules, atype, nmol, spgnum, vol_factor, mindi
 
                 # Post-generation intermolecular distance check
                 dist_ok, min_dist = check_intermolecular_distance(
-                    structure, molecules, nmol
+                    structure, nmol
                 )
                 if not dist_ok:
                     failed_spgs[spg] = failed_spgs.get(spg, 0) + 1
