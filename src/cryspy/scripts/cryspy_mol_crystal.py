@@ -90,8 +90,8 @@ def parse_args():
     parser.add_argument(
         '--mindist-factor',
         type=float,
-        default=0.8,
-        help='最小距離の因子 (default: 0.8)'
+        default=1.0,
+        help='最小距離の因子 (default: 1.0)'
     )
     parser.add_argument(
         '--no-optimization',
@@ -135,85 +135,151 @@ def load_molecules(xyz_files):
     return molecules, atype
 
 
+def check_intermolecular_distance(structure, molecules, nmol, min_factor=0.85):
+    """Check that intermolecular distances are reasonable.
+
+    Identifies molecules in the crystal structure using covalent bond
+    connectivity, then checks that all inter-molecular atom-pair distances
+    exceed a threshold derived from van der Waals radii.
+
+    Args:
+        structure: pymatgen Structure object
+        molecules: list of pymatgen Molecule objects
+        nmol: tuple of number of molecules per type
+        min_factor: factor applied to van der Waals radii sum (default: 0.85)
+
+    Returns:
+        (True, min_dist) if all intermolecular distances are acceptable
+        (False, min_dist) if any intermolecular distance is too short
+    """
+    # Van der Waals radii (Å) - Bondi radii
+    vdw_radii = {
+        'H': 1.20, 'He': 1.40, 'Li': 1.82, 'Be': 1.53,
+        'B': 1.92, 'C': 1.70, 'N': 1.55, 'O': 1.52,
+        'F': 1.47, 'Ne': 1.54, 'Na': 2.27, 'Mg': 1.73,
+        'Al': 1.84, 'Si': 2.10, 'P': 1.80, 'S': 1.80,
+        'Cl': 1.75, 'Ar': 1.88, 'K': 2.75, 'Ca': 2.31,
+        'Br': 1.85, 'I': 1.98, 'Se': 1.90,
+    }
+
+    # Covalent radii (Å) for bond identification
+    covalent_radii = {
+        'H': 0.31, 'He': 0.28, 'Li': 1.28, 'Be': 0.96,
+        'B': 0.84, 'C': 0.76, 'N': 0.71, 'O': 0.66,
+        'F': 0.57, 'Ne': 0.58, 'Na': 1.66, 'Mg': 1.41,
+        'Al': 1.21, 'Si': 1.11, 'P': 1.07, 'S': 1.05,
+        'Cl': 1.02, 'Ar': 1.06, 'K': 2.03, 'Ca': 1.76,
+        'Br': 1.20, 'I': 1.39, 'Se': 1.20,
+    }
+
+    n = structure.num_sites
+
+    # Identify molecules using covalent bond connectivity
+    # Build adjacency list based on covalent bond distances
+    bond_tolerance = 1.3  # tolerance factor for covalent bond length
+    adj = [[] for _ in range(n)]
+    dist_cache = {}
+    for i in range(n):
+        for j in range(i):
+            dist = structure.get_distance(i, j)
+            dist_cache[(i, j)] = dist
+            r_i = covalent_radii.get(structure[i].species_string, 0.77)
+            r_j = covalent_radii.get(structure[j].species_string, 0.77)
+            max_bond = (r_i + r_j) * bond_tolerance
+            if dist < max_bond:
+                adj[i].append(j)
+                adj[j].append(i)
+
+    # Find connected components (molecules) using BFS
+    mol_ids = [-1] * n
+    mol_idx = 0
+    for start in range(n):
+        if mol_ids[start] != -1:
+            continue
+        queue = [start]
+        mol_ids[start] = mol_idx
+        while queue:
+            node = queue.pop(0)
+            for neighbor in adj[node]:
+                if mol_ids[neighbor] == -1:
+                    mol_ids[neighbor] = mol_idx
+                    queue.append(neighbor)
+        mol_idx += 1
+
+    # Verify we found the expected number of molecules
+    expected_nmol = sum(nmol)
+    if mol_idx != expected_nmol:
+        if mol_idx < expected_nmol:
+            # Fewer molecules found → some molecules are merged due to close contact
+            logger.debug(f"Found {mol_idx} molecules, expected {expected_nmol}. "
+                         f"Molecules appear to be merged (too close).")
+            return False, None
+        else:
+            # More molecules found → possible periodic boundary artifact
+            logger.debug(f"Found {mol_idx} molecules, expected {expected_nmol}. "
+                         f"Skipping intermolecular distance check.")
+            return True, None
+
+    # Check minimum intermolecular distances using cached distances
+    min_dist = float('inf')
+    for i in range(n):
+        for j in range(i):
+            if mol_ids[i] != mol_ids[j]:
+                dist = dist_cache[(i, j)]
+                sym_i = structure[i].species_string
+                sym_j = structure[j].species_string
+                r_i = vdw_radii.get(sym_i, 1.70)
+                r_j = vdw_radii.get(sym_j, 1.70)
+                min_vdw_dist = (r_i + r_j) * min_factor
+                if dist < min_vdw_dist:
+                    logger.debug(f"分子間距離が短すぎます: {sym_i}-{sym_j} = {dist:.3f} Å "
+                                 f"(閾値: {min_vdw_dist:.3f} Å)")
+                    return False, dist
+                if dist < min_dist:
+                    min_dist = dist
+
+    return True, min_dist
+
+
 def generate_molecular_crystal_all_symmetries(molecules, atype, nmol, spgnum, vol_factor, mindist_factor, max_attempts_per_spg=10):
-    """Generate molecular crystal structures for all space groups and return the one with highest density."""
-    
+    """Generate molecular crystal structures for all space groups and return the one with highest density.
+
+    Uses Tol_matrix with the given mindist_factor to enforce proper intermolecular
+    distances during PyXtal generation, and performs a post-generation intermolecular
+    distance check to reject structures where molecules are too close.
+    """
+
     from contextlib import redirect_stdout, redirect_stderr
     from io import StringIO
-    
-    # Set minimum distances
-    if len(atype) == 1:
-        mindist = ((2.0,),)  # 単原子種の場合
-    else:
-        # 複数原子種の場合、簡単な距離マトリックスを作成
-        n_types = len(atype)
-        mindist = []
-        for i in range(n_types):
-            row = []
-            for j in range(n_types):
-                # 典型的な共有結合半径に基づく最小距離
-                if atype[i] == 'H' or atype[j] == 'H':
-                    dist = 1.5
-                elif atype[i] in ['C', 'N', 'O'] and atype[j] in ['C', 'N', 'O']:
-                    dist = 2.5
-                else:
-                    dist = 3.0
-                row.append(dist * mindist_factor)
-            mindist.append(tuple(row))
-        mindist = tuple(mindist)
-    
-    logger.info(f"最小距離設定: {mindist}")
-    
-    # Set tolerance matrix
-    tolmat = Tol_matrix(prototype="molecular")
-    
+
+    # Set tolerance matrix with mindist_factor to control intermolecular distances
+    tolmat = Tol_matrix(prototype="molecular", factor=mindist_factor)
+    logger.info(f"Tol_matrix factor: {mindist_factor}")
+
     successful_structures = []
-    
+
+    # Volume factors to try for each space group (uniform for fair comparison)
+    # Start from 1.0 to avoid generating overly compact structures
+    base_factors = [1.0, 1.2, 1.5, 2.0]
+    volume_factors = [vol_factor * bf for bf in base_factors]
+
     # Try all space groups
     for spg in spgnum:
         logger.info(f"空間群 {spg} で結晶生成を試行中...")
-        
-        # Use space-group-specific volume factors to allow natural density differences
-        # Different space groups have different packing efficiencies, so we need to
-        # let them settle to their natural volumes rather than forcing optimal packing
-        base_factors = [0.8, 1.0, 1.2, 1.5, 2.0]  # Wider range, less biased toward high density
-        
-        # Add space-group-specific scaling to account for different symmetry efficiencies
-        # Higher symmetry groups often pack more efficiently, so they get slightly higher starting volumes
-        spg_multipliers = {
-            range(1, 3): 1.0,      # P1, P-1 (triclinic) - low symmetry, keep as reference
-            range(3, 16): 1.1,     # monoclinic 
-            range(16, 75): 1.2,    # orthorhombic
-            range(75, 143): 1.3,   # tetragonal  
-            range(143, 168): 1.4,  # trigonal
-            range(168, 195): 1.5,  # hexagonal
-            range(195, 231): 1.6,  # cubic - highest symmetry, often most efficient packing
-        }
-        
-        # Find the multiplier for this space group
-        spg_mult = 1.0
-        for spg_range, mult in spg_multipliers.items():
-            if spg in spg_range:
-                spg_mult = mult
-                break
-        
-        volume_factors = [vol_factor * base_factor * spg_mult for base_factor in base_factors]
-        
-        # Instead of finding the "best" (highest density), take the first successful structure
-        # This allows each space group to settle to its natural density
+
         structure_found = False
-        
+
         for vol_f in volume_factors:
             if structure_found:
                 break
-                
+
             attempt = 0
             pyxtal_fail_count = 0  # Track PyXtal internal failures
             while attempt < max_attempts_per_spg:
                 try:
                     # Create pyxtal structure
                     crystal = pyxtal(molecular=True)
-                    
+
                     # Capture stdout/stderr to detect PyXtal internal failures
                     f = StringIO()
                     with redirect_stdout(f):
@@ -227,7 +293,7 @@ def generate_molecular_crystal_all_symmetries(molecules, atype, nmol, spgnum, vo
                                 conventional=False,
                                 tm=tolmat
                             )
-                    
+
                     output = f.getvalue()
                     # Check for various PyXtal failure messages (case-insensitive, partial match)
                     pyxtal_failure_indicators = [
@@ -244,54 +310,76 @@ def generate_molecular_crystal_all_symmetries(molecules, atype, nmol, spgnum, vo
                         if pyxtal_fail_count >= 3:
                             logger.debug(f"空間群 {spg} (vol_factor={vol_f:.2f}) をスキップ - PyXtal内部失敗が多すぎます")
                             break  # Break to try next volume factor
-                    
+
                     if crystal.valid:
                         # Convert to pymatgen structure
                         structure = crystal.to_pymatgen()
+
+                        # Post-generation intermolecular distance check
+                        dist_ok, min_dist = check_intermolecular_distance(
+                            structure, molecules, nmol
+                        )
+                        if not dist_ok:
+                            if min_dist is not None:
+                                logger.debug(f"分子間距離チェック不合格 (空間群 {spg}, vol_factor={vol_f:.2f}): "
+                                             f"最小距離 = {min_dist:.3f} Å")
+                            else:
+                                logger.debug(f"分子間距離チェック不合格 (空間群 {spg}, vol_factor={vol_f:.2f}): "
+                                             f"分子が近すぎて融合")
+                            attempt += 1
+                            continue
+                        if min_dist is None:
+                            logger.debug(f"分子識別不可 (空間群 {spg}, vol_factor={vol_f:.2f}): スキップ")
+                            attempt += 1
+                            continue
+
                         density = structure.density
-                        
-                        # Take this structure (first successful one, not optimizing for highest density)
+
                         successful_structures.append({
                             'structure': structure,
                             'space_group': spg,
                             'density': density,
                             'volume': structure.volume,
-                            'vol_factor_used': vol_f
+                            'vol_factor_used': vol_f,
+                            'min_intermol_dist': min_dist
                         })
                         logger.info(f"空間群 {spg} で結晶構造生成成功: "
-                                   f"密度 = {density:.3f} g/cm³, vol_factor={vol_f:.2f}")
+                                   f"密度 = {density:.3f} g/cm³, vol_factor={vol_f:.2f}, "
+                                   f"最小分子間距離 = {min_dist:.3f} Å")
                         structure_found = True
                         break  # Success, move to next space group
                     else:
                         logger.debug(f"無効な結晶構造: 空間群 {spg}, vol_factor={vol_f:.1f}, 試行 {attempt + 1}")
-                        
+
                 except Exception as e:
                     logger.debug(f"結晶生成失敗 (空間群 {spg}, vol_factor={vol_f:.1f}, 試行 {attempt + 1}): {e}")
-                
+
                 attempt += 1
-        
+
         if not structure_found:
             logger.warning(f"空間群 {spg} で全ての体積因子で結晶構造生成に失敗")
-    
+
     if not successful_structures:
         raise RuntimeError("全ての空間群で結晶構造生成に失敗しました")
-    
+
     # Sort by density (highest first)
     successful_structures.sort(key=lambda x: x['density'], reverse=True)
-    
+
     # Log all successful structures
     logger.info("成功した結晶構造:")
     for i, struct_info in enumerate(successful_structures):
         logger.info(f"  {i+1}. 空間群 {struct_info['space_group']}: "
                    f"密度 = {struct_info['density']:.3f} g/cm³, "
                    f"体積 = {struct_info['volume']:.2f} Å³, "
-                   f"vol_factor = {struct_info['vol_factor_used']:.2f}")
-    
+                   f"vol_factor = {struct_info['vol_factor_used']:.2f}, "
+                   f"最小分子間距離 = {struct_info['min_intermol_dist']:.3f} Å")
+
     # Return structure with highest density
     best_structure_info = successful_structures[0]
     logger.info(f"最高密度構造を選択: 空間群 {best_structure_info['space_group']}, "
-               f"密度 = {best_structure_info['density']:.3f} g/cm³")
-    
+               f"密度 = {best_structure_info['density']:.3f} g/cm³, "
+               f"最小分子間距離 = {best_structure_info['min_intermol_dist']:.3f} Å")
+
     return best_structure_info['structure']
 
 
@@ -314,31 +402,9 @@ def generate_molecular_crystal(molecules, atype, nmol, spgnum, vol_factor, mindi
     from contextlib import redirect_stdout, redirect_stderr
     from io import StringIO
     
-    # Set minimum distances
-    if len(atype) == 1:
-        mindist = ((2.0,),)  # 単原子種の場合
-    else:
-        # 複数原子種の場合、簡単な距離マトリックスを作成
-        n_types = len(atype)
-        mindist = []
-        for i in range(n_types):
-            row = []
-            for j in range(n_types):
-                # 典型的な共有結合半径に基づく最小距離
-                if atype[i] == 'H' or atype[j] == 'H':
-                    dist = 1.5
-                elif atype[i] in ['C', 'N', 'O'] and atype[j] in ['C', 'N', 'O']:
-                    dist = 2.5
-                else:
-                    dist = 3.0
-                row.append(dist * mindist_factor)
-            mindist.append(tuple(row))
-        mindist = tuple(mindist)
-    
-    logger.info(f"最小距離設定: {mindist}")
-    
-    # Set tolerance matrix
-    tolmat = Tol_matrix(prototype="molecular")
+    # Set tolerance matrix with mindist_factor to control intermolecular distances
+    tolmat = Tol_matrix(prototype="molecular", factor=mindist_factor)
+    logger.info(f"Tol_matrix factor: {mindist_factor}")
     
     # Generate crystal structure
     attempt = 0
@@ -399,7 +465,25 @@ def generate_molecular_crystal(molecules, atype, nmol, spgnum, vol_factor, mindi
             if crystal.valid:
                 # Convert to pymatgen structure
                 structure = crystal.to_pymatgen()
+
+                # Post-generation intermolecular distance check
+                dist_ok, min_dist = check_intermolecular_distance(
+                    structure, molecules, nmol
+                )
+                if not dist_ok:
+                    failed_spgs[spg] = failed_spgs.get(spg, 0) + 1
+                    if min_dist is not None:
+                        logger.debug(f"分子間距離チェック不合格 (空間群 {spg}): "
+                                     f"最小距離 = {min_dist:.3f} Å")
+                    else:
+                        logger.debug(f"分子間距離チェック不合格 (空間群 {spg}): "
+                                     f"分子が近すぎて融合")
+                    attempt += 1
+                    continue
+
                 logger.info(f"結晶構造生成成功: 空間群 {spg} (試行回数: {attempt + 1})")
+                if min_dist is not None:
+                    logger.info(f"最小分子間距離: {min_dist:.3f} Å")
                 return structure
             else:
                 failed_spgs[spg] += 1

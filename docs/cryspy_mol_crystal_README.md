@@ -51,7 +51,7 @@ cryspy-mol-crystal water.xyz methane.xyz --nmol 2 4
 - `--fmax`: 構造最適化の力の閾値 (eV/Å) (default: 0.05)
 - `--steps`: 構造最適化の最大ステップ数 (default: 1000)
 - `--calculator`: 構造最適化に使用する計算機 (default: EMT)
-- `--mindist-factor`: 最小距離の因子 (default: 0.8)
+- `--mindist-factor`: 最小距離の因子 (default: 1.0)
 - `--no-optimization`: 構造最適化を行わない
 - `--debug`: デバッグモード
 
