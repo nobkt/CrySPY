@@ -135,35 +135,40 @@ def load_molecules(xyz_files):
     return molecules, atype
 
 
-def check_intermolecular_distance(structure, nmol, min_factor=0.7):
-    """Check that intermolecular distances are reasonable.
+def check_intermolecular_distance(structure, nmol, min_factor=0.85):
+    """Check intermolecular distances and self-interaction for molecular crystals.
 
     Identifies molecules in the crystal structure using covalent bond
-    connectivity, then checks that all inter-molecular atom-pair distances
-    exceed a threshold derived from van der Waals radii.
+    connectivity, then performs two physics-based validation checks:
 
-    Note: min_factor is a physics-based threshold for van der Waals contact
-    distances, separate from the Tol_matrix factor used during PyXtal generation.
-    The default of 0.7 allows hydrogen-bonded contacts while rejecting
-    pathological molecular overlaps.
+    1. Self-interaction check: Unwraps each molecule to its true Cartesian
+       coordinates (accounting for periodic boundary crossings), then verifies
+       that no molecule overlaps with its own periodic images. This prevents
+       structures where molecules are too large for the unit cell or positioned
+       such that they interact with themselves through periodic boundaries.
+
+    2. Intermolecular distance check: Verifies that all inter-molecular
+       atom-pair distances (minimum image) exceed a threshold derived from
+       van der Waals radii.
 
     Args:
         structure: pymatgen Structure object
         nmol: tuple of number of molecules per type
-        min_factor: factor applied to van der Waals radii sum (default: 0.7).
-            A value of 0.7 means intermolecular distances must be at least
-            70% of the sum of van der Waals radii for the atom pair.
-            Examples with min_factor=0.7:
-              H-H threshold: 1.68 Å, O-H: 1.90 Å, C-C: 2.38 Å
+        min_factor: factor applied to van der Waals radii sum (default: 0.85).
+            A value of 0.85 means distances must be at least 85% of the sum
+            of van der Waals radii for the atom pair. This threshold is
+            appropriate for molecular crystals: it rejects pathological
+            overlaps while allowing close van der Waals contacts.
+            Examples with min_factor=0.85:
+              H-H threshold: 2.04 Å, O-H: 2.31 Å, C-C: 2.89 Å
 
     Returns:
-        (True, min_dist) if all intermolecular distances are acceptable
-        (False, min_dist) if any intermolecular distance is too short
-        (False, None) if molecules appear merged (too close to distinguish)
-        (True, None) if molecule identification failed (skipped check)
+        (True, min_dist) if all checks pass
+        (False, min_dist) if any distance check fails
+        (False, None) if molecule identification failed
     """
     # Van der Waals radii (Å) - Bondi radii
-    vdw_radii = {
+    VDW_RADII = {
         'H': 1.20, 'He': 1.40, 'Li': 1.82, 'Be': 1.53,
         'B': 1.92, 'C': 1.70, 'N': 1.55, 'O': 1.52,
         'F': 1.47, 'Ne': 1.54, 'Na': 2.27, 'Mg': 1.73,
@@ -171,10 +176,10 @@ def check_intermolecular_distance(structure, nmol, min_factor=0.7):
         'Cl': 1.75, 'Ar': 1.88, 'K': 2.75, 'Ca': 2.31,
         'Br': 1.85, 'I': 1.98, 'Se': 1.90,
     }
-    DEFAULT_VDW_RADIUS = 1.70  # Å, carbon's van der Waals radius as fallback
+    DEFAULT_VDW_RADIUS = 1.70  # Å
 
     # Covalent radii (Å) for bond identification
-    covalent_radii = {
+    COVALENT_RADII = {
         'H': 0.31, 'He': 0.28, 'Li': 1.28, 'Be': 0.96,
         'B': 0.84, 'C': 0.76, 'N': 0.71, 'O': 0.66,
         'F': 0.57, 'Ne': 0.58, 'Na': 1.66, 'Mg': 1.41,
@@ -182,12 +187,12 @@ def check_intermolecular_distance(structure, nmol, min_factor=0.7):
         'Cl': 1.02, 'Ar': 1.06, 'K': 2.03, 'Ca': 1.76,
         'Br': 1.20, 'I': 1.39, 'Se': 1.20,
     }
-    DEFAULT_COVALENT_RADIUS = 0.77  # Å, close to carbon's covalent radius as fallback
+    DEFAULT_COVALENT_RADIUS = 0.77  # Å
     BOND_TOLERANCE = 1.3  # factor for covalent bond length identification
 
     n = structure.num_sites
 
-    # Identify molecules using covalent bond connectivity
+    # ---- Step 1: Identify molecules using covalent bond connectivity ----
     # Build adjacency list based on covalent bond distances
     adj = [[] for _ in range(n)]
     dist_cache = {}
@@ -195,8 +200,8 @@ def check_intermolecular_distance(structure, nmol, min_factor=0.7):
         for j in range(i):
             dist = structure.get_distance(i, j)
             dist_cache[(i, j)] = dist
-            r_i = covalent_radii.get(structure[i].species_string, DEFAULT_COVALENT_RADIUS)
-            r_j = covalent_radii.get(structure[j].species_string, DEFAULT_COVALENT_RADIUS)
+            r_i = COVALENT_RADII.get(structure[i].species_string, DEFAULT_COVALENT_RADIUS)
+            r_j = COVALENT_RADII.get(structure[j].species_string, DEFAULT_COVALENT_RADIUS)
             max_bond = (r_i + r_j) * BOND_TOLERANCE
             if dist < max_bond:
                 adj[i].append(j)
@@ -222,17 +227,91 @@ def check_intermolecular_distance(structure, nmol, min_factor=0.7):
     expected_nmol = sum(nmol)
     if mol_idx != expected_nmol:
         if mol_idx < expected_nmol:
-            # Fewer molecules found → some molecules are merged due to close contact
             logger.debug(f"Found {mol_idx} molecules, expected {expected_nmol}. "
                          f"Molecules appear to be merged (too close).")
-            return False, None
         else:
-            # More molecules found → possible periodic boundary artifact
             logger.debug(f"Found {mol_idx} molecules, expected {expected_nmol}. "
-                         f"Skipping intermolecular distance check.")
-            return True, None
+                         f"Molecule identification failed.")
+        return False, None
 
-    # Check minimum intermolecular distances using cached distances
+    # ---- Step 2: Self-interaction check ----
+    # Unwrap each molecule to true Cartesian coordinates using BFS traversal
+    # of the covalent bond graph, then check that no molecule overlaps with
+    # its own periodic images (lattice-translated copies).
+    mol_atom_groups = {}
+    for i in range(n):
+        mol_id = mol_ids[i]
+        if mol_id not in mol_atom_groups:
+            mol_atom_groups[mol_id] = []
+        mol_atom_groups[mol_id].append(i)
+
+    lattice = structure.lattice
+    frac_coords = structure.frac_coords
+    lat_matrix = lattice.matrix  # shape (3, 3), row vectors
+
+    for mol_id, atoms in mol_atom_groups.items():
+        atom_set = set(atoms)
+
+        # Unwrap molecule: BFS from first atom, placing each neighbor at
+        # the minimum-image position relative to its bonded parent.
+        # This recovers the true (unwrapped) geometry of the molecule
+        # even when it crosses periodic boundaries.
+        start = atoms[0]
+        visited = {start}
+        queue = [start]
+        unwrapped_frac = {}
+        unwrapped_frac[start] = frac_coords[start].copy()
+
+        while queue:
+            current = queue.pop(0)
+            for neighbor in adj[current]:
+                if neighbor in atom_set and neighbor not in visited:
+                    visited.add(neighbor)
+                    queue.append(neighbor)
+                    diff = frac_coords[neighbor] - unwrapped_frac[current]
+                    diff = diff - np.round(diff)
+                    unwrapped_frac[neighbor] = unwrapped_frac[current] + diff
+
+        # Convert to Cartesian
+        frac_array = np.array([unwrapped_frac[a] for a in atoms])
+        cart_array = lattice.get_cartesian_coords(frac_array)
+        species = [structure[a].species_string for a in atoms]
+
+        # Build vdW radii array and threshold matrix for this molecule
+        radii = np.array([VDW_RADII.get(s, DEFAULT_VDW_RADIUS) for s in species])
+        thresholds = (radii[:, np.newaxis] + radii[np.newaxis, :]) * min_factor
+
+        # Check all 26 neighboring periodic images
+        for da in [-1, 0, 1]:
+            for db in [-1, 0, 1]:
+                for dc in [-1, 0, 1]:
+                    if da == 0 and db == 0 and dc == 0:
+                        continue
+                    shift_frac = np.array([da, db, dc], dtype=float)
+                    shift_cart = shift_frac @ lat_matrix
+                    shifted_cart = cart_array + shift_cart
+
+                    # Pairwise distance matrix: original vs shifted image
+                    diffs = cart_array[:, np.newaxis, :] - shifted_cart[np.newaxis, :, :]
+                    dists = np.linalg.norm(diffs, axis=-1)
+
+                    # Check for violations
+                    violations = dists < thresholds
+                    if np.any(violations):
+                        # Find the shortest violating distance
+                        masked_dists = np.where(violations, dists, np.inf)
+                        min_loc = np.unravel_index(np.argmin(masked_dists), masked_dists.shape)
+                        min_d = dists[min_loc]
+                        logger.debug(
+                            f"セルフインタラクション検出: 分子{mol_id}の"
+                            f"{species[min_loc[0]]}-{species[min_loc[1]]} = {min_d:.3f} Å "
+                            f"(閾値: {thresholds[min_loc]:.3f} Å, "
+                            f"周期シフト: ({da},{db},{dc}))"
+                        )
+                        return False, min_d
+
+    # ---- Step 3: Intermolecular distance check ----
+    # Check minimum intermolecular distances using cached minimum-image distances
     min_dist = float('inf')
     for i in range(n):
         for j in range(i):
@@ -240,8 +319,8 @@ def check_intermolecular_distance(structure, nmol, min_factor=0.7):
                 dist = dist_cache[(i, j)]
                 sym_i = structure[i].species_string
                 sym_j = structure[j].species_string
-                r_i = vdw_radii.get(sym_i, DEFAULT_VDW_RADIUS)
-                r_j = vdw_radii.get(sym_j, DEFAULT_VDW_RADIUS)
+                r_i = VDW_RADII.get(sym_i, DEFAULT_VDW_RADIUS)
+                r_j = VDW_RADII.get(sym_j, DEFAULT_VDW_RADIUS)
                 min_vdw_dist = (r_i + r_j) * min_factor
                 if dist < min_vdw_dist:
                     logger.debug(f"分子間距離が短すぎます: {sym_i}-{sym_j} = {dist:.3f} Å "
