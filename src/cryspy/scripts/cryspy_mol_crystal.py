@@ -633,13 +633,60 @@ def optimize_structure(structure, fmax=0.05, steps=1000, calculator='EMT'):
         return structure, np.nan, False
 
 
-def write_cif(structure, output_file, nmol=None, structure_id=1, symprec=0.01):
+def _actual_Z(structure, nmol, molecules):
+    """Return the actual number of formula units in *structure*.
+
+    crystal.to_pymatgen() may return the conventional (standardised) cell.
+    For space groups with a non-primitive Bravais lattice (e.g. C2 with
+    C-centring) the conventional cell contains m times more formula units
+    than the primitive cell (m=2 for C-centring, etc.).  Using sum(nmol)
+    directly would therefore give the wrong count.
+
+    Instead we derive the minimal formula-unit atom count from the input
+    molecule list and nmol, and divide structure.num_sites by that count.
+
+    Args:
+        structure: pymatgen Structure object returned by crystal.to_pymatgen()
+        nmol: tuple of molecule counts per type as supplied by the user
+        molecules: list of pymatgen Molecule objects (same order as nmol)
+
+    Returns:
+        int: number of formula units in structure
+
+    Raises:
+        ValueError: if structure.num_sites is not divisible by the computed
+                    atoms_per_formula_unit, indicating an inconsistent structure
+    """
+    from math import gcd
+    from functools import reduce
+    # Reduce nmol by its gcd so the formula unit is the minimal stoichiometric
+    # repeat (e.g. nmol=(4,) → gcd=4, formula unit = 1 molecule; nmol=(2,3) →
+    # gcd=1, formula unit = 2 copies of mol[0] + 3 copies of mol[1]).
+    g = reduce(gcd, nmol)
+    atoms_per_formula_unit = sum((n // g) * len(mol) for n, mol in zip(nmol, molecules))
+    if atoms_per_formula_unit == 0:
+        raise ValueError("式量単位の原子数がゼロです。分子リストが空である可能性があります。")
+    if structure.num_sites % atoms_per_formula_unit != 0:
+        raise ValueError(
+            f"ユニットセルの原子数 {structure.num_sites} が "
+            f"式量単位の原子数 {atoms_per_formula_unit} で割り切れません。"
+            f"構造が正しく生成されていない可能性があります。"
+        )
+    return structure.num_sites // atoms_per_formula_unit
+
+
+def write_cif(structure, output_file, nmol=None, molecules=None, structure_id=1, symprec=0.01):
     """Write structure to CIF file.
     
     Args:
         structure: pymatgen Structure object
         output_file: output file name
         nmol: tuple of number of molecules per type (used to correct _cell_formula_units_Z)
+        molecules: list of pymatgen Molecule objects corresponding to nmol.
+            Required together with nmol to compute the correct _cell_formula_units_Z.
+            crystal.to_pymatgen() may return the conventional (multi-lattice-point) cell
+            whose atom count is a multiple of sum(nmol) * atoms_per_molecule.  Without
+            the per-molecule atom count we cannot determine which multiple it is.
         structure_id: structure ID number
         symprec: symmetry precision for space group determination
     """
@@ -649,16 +696,20 @@ def write_cif(structure, output_file, nmol=None, structure_id=1, symprec=0.01):
         cif_string = str(cif_writer)
 
         # Correct _cell_formula_units_Z and _chemical_formula_structural when nmol is given.
-        # pymatgen reduces the unit-cell composition by its overall GCD before writing these
-        # fields.  For a molecule whose atom counts share a common factor (e.g. a C2-symmetric
-        # species where every element count is even), this produces a formula that is a
-        # fraction of one molecule and a Z that is a multiple of the true molecule count.
-        # We override both fields with values that correspond to the actual molecule.
-        if nmol is not None:
-            total_nmol = sum(nmol)
-            # Derive the molecular formula as (unit-cell composition) / total_nmol
-            comp = structure.composition
-            mol_comp = comp / total_nmol
+        # pymatgen's CifWriter converts the input structure to the conventional (standardised)
+        # cell before writing.  For space groups with a non-primitive Bravais lattice (e.g. C2,
+        # which has C-centring), the conventional cell contains m times more formula units than
+        # the primitive cell (m = 2 for C-centring).  crystal.to_pymatgen() also returns the
+        # conventional cell, so structure.num_sites = m * sum(nmol) * atoms_per_molecule.
+        # Dividing by sum(nmol) therefore gives m * molecular_formula instead of the true
+        # molecular formula.
+        #
+        # The correct approach is to compute actual_Z from the actual atom count in the
+        # returned structure and the known atom count per formula unit (derived from the
+        # input molecule objects and nmol).
+        if nmol is not None and molecules is not None:
+            actual_z = _actual_Z(structure, nmol, molecules)
+            mol_comp = structure.composition / actual_z
             mol_formula = mol_comp.formula
             lines = cif_string.split('\n')
             for i, line in enumerate(lines):
@@ -667,7 +718,7 @@ def write_cif(structure, output_file, nmol=None, structure_id=1, symprec=0.01):
                 if stripped.startswith('#'):
                     continue
                 if stripped.startswith('_cell_formula_units_Z'):
-                    lines[i] = f'_cell_formula_units_Z   {total_nmol}'
+                    lines[i] = f'_cell_formula_units_Z   {actual_z}'
                 elif stripped.startswith('_chemical_formula_structural'):
                     lines[i] = f"_chemical_formula_structural   '{mol_formula}'"
             cif_string = '\n'.join(lines)
@@ -697,13 +748,17 @@ def write_cif(structure, output_file, nmol=None, structure_id=1, symprec=0.01):
         raise
 
 
-def write_structure_info(structure, nmol, output_file, structure_id=1, symprec=0.01):
+def write_structure_info(structure, nmol, output_file, molecules=None, structure_id=1, symprec=0.01):
     """Write crystal structure information to a text file.
     
     Args:
         structure: pymatgen Structure object
         nmol: tuple of number of molecules per type
         output_file: output file name
+        molecules: list of pymatgen Molecule objects corresponding to nmol (optional).
+            When provided, the actual number of molecules in the unit cell is derived
+            from structure.num_sites and the per-molecule atom count, which is correct
+            for conventional cells returned by crystal.to_pymatgen().
         structure_id: structure ID number
         symprec: symmetry precision for space group determination
     """
@@ -716,15 +771,20 @@ def write_structure_info(structure, nmol, output_file, structure_id=1, symprec=0
         # Get density
         density = structure.density
         
-        # Total number of molecules per unit cell
-        total_nmol = sum(nmol)
+        # Compute the actual number of molecules in the returned unit cell.
+        # crystal.to_pymatgen() may return the conventional cell, which for centred
+        # space groups contains more formula units than sum(nmol) (the primitive count).
+        if molecules is not None:
+            actual_z = _actual_Z(structure, nmol, molecules)
+        else:
+            actual_z = sum(nmol)
         
         # Write information
         mode = 'w' if structure_id == 1 else 'a'
         with open(output_file, mode) as f:
             f.write(f"# Structure {structure_id}\n")
-            f.write(f"Number of molecules per unit cell: {total_nmol}\n")
-            f.write(f"  Molecules per type: {nmol}\n")
+            f.write(f"Number of molecules per unit cell: {actual_z}\n")
+            f.write(f"  Molecules per type (user-specified): {nmol}\n")
             f.write(f"Space group number: {spg_number}\n")
             f.write(f"Space group symbol: {spg_symbol}\n")
             f.write(f"Density: {density:.4f} g/cm³\n")
@@ -801,10 +861,10 @@ def main():
                 logger.info("密度最適化モードのため構造最適化をスキップ")
             
             # Write to CIF file
-            write_cif(structure, args.output, nmol=nmol, structure_id=i + 1)
+            write_cif(structure, args.output, nmol=nmol, molecules=molecules, structure_id=i + 1)
             
             # Write structure information to text file
-            write_structure_info(structure, nmol, info_output, i + 1)
+            write_structure_info(structure, nmol, info_output, molecules=molecules, structure_id=i + 1)
         
         logger.info(f"全ての構造生成が完了しました: {args.output}")
         logger.info(f"構造情報ファイル: {info_output}")
