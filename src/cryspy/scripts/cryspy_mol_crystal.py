@@ -633,12 +633,13 @@ def optimize_structure(structure, fmax=0.05, steps=1000, calculator='EMT'):
         return structure, np.nan, False
 
 
-def write_cif(structure, output_file, structure_id=1, symprec=0.01):
+def write_cif(structure, output_file, nmol=None, structure_id=1, symprec=0.01):
     """Write structure to CIF file.
     
     Args:
         structure: pymatgen Structure object
         output_file: output file name
+        nmol: tuple of number of molecules per type (used to correct _cell_formula_units_Z)
         structure_id: structure ID number
         symprec: symmetry precision for space group determination
     """
@@ -646,7 +647,31 @@ def write_cif(structure, output_file, structure_id=1, symprec=0.01):
         # Use pymatgen CifWriter with symprec to preserve space group symmetry
         cif_writer = CifWriter(structure, symprec=symprec)
         cif_string = str(cif_writer)
-        
+
+        # Correct _cell_formula_units_Z and _chemical_formula_structural when nmol is given.
+        # pymatgen reduces the unit-cell composition by its overall GCD before writing these
+        # fields.  For a molecule whose atom counts share a common factor (e.g. a C2-symmetric
+        # species where every element count is even), this produces a formula that is a
+        # fraction of one molecule and a Z that is a multiple of the true molecule count.
+        # We override both fields with values that correspond to the actual molecule.
+        if nmol is not None:
+            total_nmol = sum(nmol)
+            # Derive the molecular formula as (unit-cell composition) / total_nmol
+            comp = structure.composition
+            mol_comp = comp / total_nmol
+            mol_formula = mol_comp.formula
+            lines = cif_string.split('\n')
+            for i, line in enumerate(lines):
+                stripped = line.strip()
+                # Only replace data lines (not CIF comments starting with '#')
+                if stripped.startswith('#'):
+                    continue
+                if stripped.startswith('_cell_formula_units_Z'):
+                    lines[i] = f'_cell_formula_units_Z   {total_nmol}'
+                elif stripped.startswith('_chemical_formula_structural'):
+                    lines[i] = f"_chemical_formula_structural   '{mol_formula}'"
+            cif_string = '\n'.join(lines)
+
         # Modify the title for identification and add density info
         lines = cif_string.split('\n')
         density = structure.density
@@ -776,7 +801,7 @@ def main():
                 logger.info("密度最適化モードのため構造最適化をスキップ")
             
             # Write to CIF file
-            write_cif(structure, args.output, i + 1)
+            write_cif(structure, args.output, nmol=nmol, structure_id=i + 1)
             
             # Write structure information to text file
             write_structure_info(structure, nmol, info_output, i + 1)
