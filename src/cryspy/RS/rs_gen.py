@@ -69,6 +69,7 @@ def gen_random(rin, nstruc, id_offset, comm, mpi_rank, mpi_size):
                 ll_nat=rin.ll_nat,
                 ul_nat=rin.ul_nat,
                 cn_comb=cn_comb,
+                maxcnt=rin.maxcnt,
             )
             struc_mol_id = {}     # not used, just for return
         # ------ molecular crystal
@@ -88,6 +89,7 @@ def gen_random(rin, nstruc, id_offset, comm, mpi_rank, mpi_size):
                 vol_mu=rin.vol_mu,
                 vol_sigma=rin.vol_sigma,
                 timeout_mol=rin.timeout_mol,
+                maxcnt=rin.maxcnt,
             )
         # ------ molecular crystal breaking symmetry
         elif rin.struc_mode == 'mol_bs':
@@ -108,6 +110,7 @@ def gen_random(rin, nstruc, id_offset, comm, mpi_rank, mpi_size):
                 vol_sigma=rin.vol_sigma,
                 rot_mol=rin.rot_mol,
                 nrot=rin.nrot,
+                maxcnt=rin.maxcnt,
             )
     # ---------- w/o pyxtal
     else:

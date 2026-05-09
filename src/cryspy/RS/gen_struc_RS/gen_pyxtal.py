@@ -79,7 +79,7 @@ def gen_struc(
     # ---------- loop for structure generation
     while len(init_struc_data) < nstruc:
         cnt = 0  # attempt counter per structure
-        spg_fail_count = {}  # track failures per space group
+        spg_fail_count = {}  # track failures per space group (for logging only)
         
         # ------ inner loop for retry
         while cnt < maxcnt:
@@ -89,11 +89,6 @@ def gen_struc(
                 spg = random.randint(1, 230)
             else:
                 spg = random.choice(spgnum)
-            
-            # Skip space groups that failed too many times (> 10)
-            if spg_fail_count.get(spg, 0) > 10:
-                continue
-                
             # ------ generate structure
             tmp_crystal = pyxtal()
             if vc:    # variable composition
@@ -239,11 +234,6 @@ def gen_struc_mol(
                 spg = random.randint(1, 230)
             else:
                 spg = random.choice(spgnum)
-            
-            # Skip space groups that failed too many times (> 10)
-            if spg_fail_count.get(spg, 0) > 10:
-                continue
-                
             # ------ generate structure
             if timeout_mol is None:
                 tmp_crystal = pyxtal(molecular=True)
@@ -514,11 +504,6 @@ def gen_struc_mol_break_sym(
                 spg = random.randint(1, 230)
             else:
                 spg = random.choice(spgnum)
-            
-            # Skip space groups that failed too many times (> 10)
-            if spg_fail_count.get(spg, 0) > 10:
-                continue
-                
             # ------ generate structure
             tmp_crystal = pyxtal()
             try:
