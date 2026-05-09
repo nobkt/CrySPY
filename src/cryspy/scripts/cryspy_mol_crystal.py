@@ -167,7 +167,8 @@ def check_intermolecular_distance(structure, nmol, min_factor=0.85):
         (False, min_dist) if any distance check fails
         (False, None) if molecule identification failed
     """
-    # Van der Waals radii (Å) - Bondi radii
+    # Van der Waals radii (Å) - Bondi radii supplemented with Alvarez 2013
+    # (DOI: 10.1039/C3DT50599E) for transition metals and heavy elements
     VDW_RADII = {
         'H': 1.20, 'He': 1.40, 'Li': 1.82, 'Be': 1.53,
         'B': 1.92, 'C': 1.70, 'N': 1.55, 'O': 1.52,
@@ -175,10 +176,20 @@ def check_intermolecular_distance(structure, nmol, min_factor=0.85):
         'Al': 1.84, 'Si': 2.10, 'P': 1.80, 'S': 1.80,
         'Cl': 1.75, 'Ar': 1.88, 'K': 2.75, 'Ca': 2.31,
         'Br': 1.85, 'I': 1.98, 'Se': 1.90,
+        # Transition metals (Alvarez 2013)
+        'Sc': 2.15, 'Ti': 2.11, 'V': 2.07, 'Cr': 2.06, 'Mn': 2.05,
+        'Fe': 2.04, 'Co': 2.00, 'Ni': 1.97, 'Cu': 1.96, 'Zn': 2.01,
+        'Y': 2.32, 'Zr': 2.23, 'Nb': 2.18, 'Mo': 2.17, 'Tc': 2.16,
+        'Ru': 2.13, 'Rh': 2.10, 'Pd': 2.10, 'Ag': 2.11, 'Cd': 2.18,
+        'In': 2.00, 'Sn': 2.17, 'Sb': 2.06, 'Te': 2.06,
+        'Hf': 2.23, 'Ta': 2.22, 'W': 2.18, 'Re': 2.16, 'Os': 2.16,
+        'Ir': 2.13, 'Pt': 2.13, 'Au': 2.14, 'Hg': 2.23,
+        'Tl': 1.96, 'Pb': 2.29, 'Bi': 2.30,
     }
     DEFAULT_VDW_RADIUS = 1.70  # Å
 
-    # Covalent radii (Å) for bond identification
+    # Covalent radii (Å) for bond identification - Cordero 2008
+    # (DOI: 10.1039/B801115J) extended with common transition metals
     COVALENT_RADII = {
         'H': 0.31, 'He': 0.28, 'Li': 1.28, 'Be': 0.96,
         'B': 0.84, 'C': 0.76, 'N': 0.71, 'O': 0.66,
@@ -186,6 +197,15 @@ def check_intermolecular_distance(structure, nmol, min_factor=0.85):
         'Al': 1.21, 'Si': 1.11, 'P': 1.07, 'S': 1.05,
         'Cl': 1.02, 'Ar': 1.06, 'K': 2.03, 'Ca': 1.76,
         'Br': 1.20, 'I': 1.39, 'Se': 1.20,
+        # Transition metals (Cordero 2008)
+        'Sc': 1.70, 'Ti': 1.60, 'V': 1.53, 'Cr': 1.39, 'Mn': 1.61,
+        'Fe': 1.32, 'Co': 1.26, 'Ni': 1.24, 'Cu': 1.32, 'Zn': 1.22,
+        'Y': 1.90, 'Zr': 1.75, 'Nb': 1.64, 'Mo': 1.54, 'Tc': 1.47,
+        'Ru': 1.46, 'Rh': 1.42, 'Pd': 1.39, 'Ag': 1.45, 'Cd': 1.44,
+        'In': 1.42, 'Sn': 1.39, 'Sb': 1.39, 'Te': 1.38,
+        'Hf': 1.75, 'Ta': 1.70, 'W': 1.62, 'Re': 1.51, 'Os': 1.44,
+        'Ir': 1.41, 'Pt': 1.36, 'Au': 1.36, 'Hg': 1.32,
+        'Tl': 1.45, 'Pb': 1.46, 'Bi': 1.48,
     }
     DEFAULT_COVALENT_RADIUS = 0.77  # Å
     BOND_TOLERANCE = 1.3  # factor for covalent bond length identification
@@ -514,6 +534,7 @@ def generate_molecular_crystal(molecules, atype, nmol, spgnum, vol_factor, mindi
             
             # Skip space groups that failed too many times
             if failed_spgs[spg] >= 5:
+                attempt += 1
                 continue
             
             # Log progress less frequently
