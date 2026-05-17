@@ -57,6 +57,15 @@ def parse_args():
         help='各分子の数（分子種ごとに指定、未指定時は自動設定）'
     )
     parser.add_argument(
+        '--auto-nmol',
+        action='store_true',
+        help=('空間群ごとに分子数を自動調整する。各空間群の一般 Wyckoff '
+              '位置の多重度 m を取り、--nmol を比として nmol_i = ratio_i * '
+              '(m // gcd(ratio)) で算出する。--nmol 未指定時は比 (1,1,...) '
+              'を仮定し、各分子種について nmol_i = m となる（Z′=1 で分子が '
+              '一般位置に乗る配置）。')
+    )
+    parser.add_argument(
         '--spgnum',
         type=int,
         nargs='+',
@@ -133,6 +142,48 @@ def load_molecules(xyz_files):
     logger.info(f"原子種: {atype}")
     
     return molecules, atype
+
+
+def compute_auto_nmol(spg, ratio):
+    """空間群 spg に対する自動調整された nmol を返す。
+
+    各空間群の一般 Wyckoff 位置の多重度 m を pyxtal から取得し、
+    与えられた比 ``ratio`` を用いて以下の式で nmol を計算する::
+
+        scale = m // gcd(ratio)
+        nmol_i = ratio_i * scale
+
+    これは Z′ = 1 の典型的な配置（分子が一般位置に乗り、対称拘束を
+    受けない）に対応する分子数を与える。``ratio`` の最大公約数が m を
+    割り切れない場合は、より大きな scale を選ぶ必要があるため、
+    ``scale = m`` にフォールバックし、結果として nmol_i = ratio_i * m
+    （すなわち各分子種を一般位置で ratio_i 倍した数）となる。
+
+    Args:
+        spg: 空間群番号 (int)
+        ratio: 比の整数タプル/リスト（長さは分子種数）
+
+    Returns:
+        tuple of int: 空間群 spg に対する nmol
+    """
+    from math import gcd
+    from functools import reduce
+    from pyxtal.symmetry import Group
+
+    if len(ratio) == 0:
+        raise ValueError("ratio は空にできません")
+    if any(r <= 0 for r in ratio):
+        raise ValueError(f"ratio の要素は正整数である必要があります: {ratio}")
+
+    m = Group(spg)[0].multiplicity  # general position multiplicity
+    g = reduce(gcd, ratio)
+    if m % g == 0:
+        scale = m // g
+    else:
+        # gcd(ratio) が m を割らない場合は ratio_i * m を採用
+        # （nmol の各成分が m の倍数となり、必ず割り切れる配置を保証）
+        scale = m
+    return tuple(r * scale for r in ratio)
 
 
 def check_intermolecular_distance(structure, nmol, min_factor=0.85):
@@ -352,12 +403,24 @@ def check_intermolecular_distance(structure, nmol, min_factor=0.85):
     return True, min_dist
 
 
-def generate_molecular_crystal_all_symmetries(molecules, atype, nmol, spgnum, vol_factor, mindist_factor, max_attempts_per_spg=10):
+def generate_molecular_crystal_all_symmetries(molecules, atype, nmol, spgnum, vol_factor, mindist_factor, max_attempts_per_spg=10, auto_nmol=False):
     """Generate molecular crystal structures for all space groups and return the one with highest density.
 
     Uses Tol_matrix with the given mindist_factor to enforce proper intermolecular
     distances during PyXtal generation, and performs a post-generation intermolecular
     distance check to reject structures where molecules are too close.
+
+    Args:
+        nmol: tuple of molecule counts per type. When ``auto_nmol`` is True,
+            this is interpreted as a ratio and the actual nmol is computed
+            per space group from its general position multiplicity.
+        auto_nmol: if True, recompute nmol for each space group using
+            :func:`compute_auto_nmol`. The user-supplied ``nmol`` is used as
+            the ratio between molecule types.
+
+    Returns:
+        tuple: (structure, nmol_used) where ``nmol_used`` is the actual
+        tuple of molecule counts used to generate the returned structure.
     """
 
     from contextlib import redirect_stdout, redirect_stderr
@@ -366,6 +429,8 @@ def generate_molecular_crystal_all_symmetries(molecules, atype, nmol, spgnum, vo
     # Set tolerance matrix with mindist_factor to control intermolecular distances
     tolmat = Tol_matrix(prototype="molecular", factor=mindist_factor)
     logger.info(f"Tol_matrix factor: {mindist_factor}")
+    if auto_nmol:
+        logger.info(f"--auto-nmol 有効: 各空間群の一般位置多重度に基づき nmol を自動調整します (比={nmol})")
 
     successful_structures = []
 
@@ -376,7 +441,17 @@ def generate_molecular_crystal_all_symmetries(molecules, atype, nmol, spgnum, vo
 
     # Try all space groups
     for spg in spgnum:
-        logger.info(f"空間群 {spg} で結晶生成を試行中...")
+        # Determine nmol for this space group
+        if auto_nmol:
+            try:
+                nmol_for_spg = compute_auto_nmol(spg, nmol)
+            except Exception as e:
+                logger.warning(f"空間群 {spg} の自動 nmol 計算に失敗したためスキップ: {e}")
+                continue
+            logger.info(f"空間群 {spg} で結晶生成を試行中... (自動 nmol = {nmol_for_spg})")
+        else:
+            nmol_for_spg = nmol
+            logger.info(f"空間群 {spg} で結晶生成を試行中...")
 
         structure_found = False
 
@@ -399,7 +474,7 @@ def generate_molecular_crystal_all_symmetries(molecules, atype, nmol, spgnum, vo
                                 dim=3,
                                 group=spg,
                                 species=molecules,
-                                numIons=nmol,
+                                numIons=nmol_for_spg,
                                 factor=vol_f,
                                 conventional=False,
                                 tm=tolmat
@@ -428,7 +503,7 @@ def generate_molecular_crystal_all_symmetries(molecules, atype, nmol, spgnum, vo
 
                         # Post-generation intermolecular distance check
                         dist_ok, min_dist = check_intermolecular_distance(
-                            structure, nmol
+                            structure, nmol_for_spg
                         )
                         if not dist_ok:
                             if min_dist is not None:
@@ -452,11 +527,12 @@ def generate_molecular_crystal_all_symmetries(molecules, atype, nmol, spgnum, vo
                             'density': density,
                             'volume': structure.volume,
                             'vol_factor_used': vol_f,
-                            'min_intermol_dist': min_dist
+                            'min_intermol_dist': min_dist,
+                            'nmol_used': nmol_for_spg,
                         })
                         logger.info(f"空間群 {spg} で結晶構造生成成功: "
                                    f"密度 = {density:.3f} g/cm³, vol_factor={vol_f:.2f}, "
-                                   f"最小分子間距離 = {min_dist:.3f} Å")
+                                   f"最小分子間距離 = {min_dist:.3f} Å, nmol={nmol_for_spg}")
                         structure_found = True
                         break  # Success, move to next space group
                     else:
@@ -483,31 +559,37 @@ def generate_molecular_crystal_all_symmetries(molecules, atype, nmol, spgnum, vo
                    f"密度 = {struct_info['density']:.3f} g/cm³, "
                    f"体積 = {struct_info['volume']:.2f} Å³, "
                    f"vol_factor = {struct_info['vol_factor_used']:.2f}, "
-                   f"最小分子間距離 = {struct_info['min_intermol_dist']:.3f} Å")
+                   f"最小分子間距離 = {struct_info['min_intermol_dist']:.3f} Å, "
+                   f"nmol = {struct_info['nmol_used']}")
 
     # Return structure with highest density
     best_structure_info = successful_structures[0]
     logger.info(f"最高密度構造を選択: 空間群 {best_structure_info['space_group']}, "
                f"密度 = {best_structure_info['density']:.3f} g/cm³, "
-               f"最小分子間距離 = {best_structure_info['min_intermol_dist']:.3f} Å")
+               f"最小分子間距離 = {best_structure_info['min_intermol_dist']:.3f} Å, "
+               f"nmol = {best_structure_info['nmol_used']}")
 
-    return best_structure_info['structure']
+    return best_structure_info['structure'], best_structure_info['nmol_used']
 
 
-def generate_molecular_crystal(molecules, atype, nmol, spgnum, vol_factor, mindist_factor, max_attempts=100):
+def generate_molecular_crystal(molecules, atype, nmol, spgnum, vol_factor, mindist_factor, max_attempts=100, auto_nmol=False):
     """Generate molecular crystal structure using pyxtal.
     
     Args:
         molecules: list of pymatgen Molecule objects
         atype: tuple of atom types
-        nmol: tuple of number of molecules per type
+        nmol: tuple of number of molecules per type. When ``auto_nmol`` is
+            True, this is interpreted as a ratio and the actual nmol is
+            computed per randomly selected space group.
         spgnum: list of space group numbers to try
         vol_factor: volume factor for structure generation
         mindist_factor: minimum distance factor
         max_attempts: maximum number of attempts (default: 100)
+        auto_nmol: if True, compute nmol per attempt from the chosen space
+            group's general position multiplicity.
     
     Returns:
-        pymatgen Structure object
+        tuple: (structure, nmol_used)
     """
     
     from contextlib import redirect_stdout, redirect_stderr
@@ -516,6 +598,8 @@ def generate_molecular_crystal(molecules, atype, nmol, spgnum, vol_factor, mindi
     # Set tolerance matrix with mindist_factor to control intermolecular distances
     tolmat = Tol_matrix(prototype="molecular", factor=mindist_factor)
     logger.info(f"Tol_matrix factor: {mindist_factor}")
+    if auto_nmol:
+        logger.info(f"--auto-nmol 有効: 各試行で選択された空間群の一般位置多重度に基づき nmol を自動調整します (比={nmol})")
     
     # Generate crystal structure
     attempt = 0
@@ -526,7 +610,7 @@ def generate_molecular_crystal(molecules, atype, nmol, spgnum, vol_factor, mindi
     while attempt < max_attempts:
         try:
             # Choose random space group
-            spg = np.random.choice(spgnum)
+            spg = int(np.random.choice(spgnum))
             
             # Track failures per space group
             if spg not in failed_spgs:
@@ -536,13 +620,25 @@ def generate_molecular_crystal(molecules, atype, nmol, spgnum, vol_factor, mindi
             if failed_spgs[spg] >= 5:
                 attempt += 1
                 continue
-            
+
+            # Determine nmol for this space group
+            if auto_nmol:
+                try:
+                    nmol_for_spg = compute_auto_nmol(spg, nmol)
+                except Exception as e:
+                    logger.debug(f"空間群 {spg} の自動 nmol 計算に失敗: {e}")
+                    failed_spgs[spg] += 1
+                    attempt += 1
+                    continue
+            else:
+                nmol_for_spg = nmol
+
             # Log progress less frequently
             if attempt - last_log_attempt >= log_interval:
                 logger.info(f"試行 {attempt + 1}/{max_attempts}: 結晶生成を継続中...")
                 last_log_attempt = attempt
             elif attempt == 0:
-                logger.info(f"試行 {attempt + 1}: 空間群 {spg} で結晶生成中...")
+                logger.info(f"試行 {attempt + 1}: 空間群 {spg} で結晶生成中... (nmol={nmol_for_spg})")
             
             # Create pyxtal structure
             crystal = pyxtal(molecular=True)
@@ -555,7 +651,7 @@ def generate_molecular_crystal(molecules, atype, nmol, spgnum, vol_factor, mindi
                         dim=3,
                         group=spg,
                         species=molecules,
-                        numIons=nmol,
+                        numIons=nmol_for_spg,
                         factor=vol_factor,
                         conventional=False,
                         tm=tolmat
@@ -580,7 +676,7 @@ def generate_molecular_crystal(molecules, atype, nmol, spgnum, vol_factor, mindi
 
                 # Post-generation intermolecular distance check
                 dist_ok, min_dist = check_intermolecular_distance(
-                    structure, nmol
+                    structure, nmol_for_spg
                 )
                 if not dist_ok:
                     failed_spgs[spg] = failed_spgs.get(spg, 0) + 1
@@ -593,10 +689,10 @@ def generate_molecular_crystal(molecules, atype, nmol, spgnum, vol_factor, mindi
                     attempt += 1
                     continue
 
-                logger.info(f"結晶構造生成成功: 空間群 {spg} (試行回数: {attempt + 1})")
+                logger.info(f"結晶構造生成成功: 空間群 {spg} (試行回数: {attempt + 1}, nmol={nmol_for_spg})")
                 if min_dist is not None:
                     logger.info(f"最小分子間距離: {min_dist:.3f} Å")
-                return structure
+                return structure, nmol_for_spg
             else:
                 failed_spgs[spg] += 1
                 logger.debug(f"無効な結晶構造: 空間群 {spg}")
@@ -837,14 +933,22 @@ def main():
         
         # Set number of molecules if not specified
         if args.nmol is None:
-            # Default: 4 molecules per type for reasonable packing
-            nmol = tuple([4] * len(molecules))
+            if args.auto_nmol:
+                # --auto-nmol 有効時の既定比は全分子種 1
+                nmol = tuple([1] * len(molecules))
+                logger.info(f"--auto-nmol 有効, --nmol 未指定: 比を {nmol} として空間群ごとに自動算出します")
+            else:
+                # Default: 4 molecules per type for reasonable packing
+                nmol = tuple([4] * len(molecules))
         else:
             if len(args.nmol) != len(molecules):
                 raise ValueError(f"--nmolの数({len(args.nmol)})が分子ファイル数({len(molecules)})と一致しません")
             nmol = tuple(args.nmol)
         
-        logger.info(f"分子数設定: {nmol}")
+        if args.auto_nmol:
+            logger.info(f"分子数比設定: {nmol} (空間群ごとに自動調整)")
+        else:
+            logger.info(f"分子数設定: {nmol}")
         
         if args.optimize_density:
             logger.info("密度最適化モード: 全ての対称性を試して最も密度が高い構造を選択")
@@ -861,14 +965,16 @@ def main():
             
             # Generate initial crystal structure
             if args.optimize_density:
-                structure = generate_molecular_crystal_all_symmetries(
+                structure, nmol_used = generate_molecular_crystal_all_symmetries(
                     molecules, atype, nmol, args.spgnum, 
-                    args.vol_factor, args.mindist_factor
+                    args.vol_factor, args.mindist_factor,
+                    auto_nmol=args.auto_nmol
                 )
             else:
-                structure = generate_molecular_crystal(
+                structure, nmol_used = generate_molecular_crystal(
                     molecules, atype, nmol, args.spgnum, 
-                    args.vol_factor, args.mindist_factor
+                    args.vol_factor, args.mindist_factor,
+                    auto_nmol=args.auto_nmol
                 )
             
             # Optimize structure if requested (但し、--optimize-densityが指定されている場合は無効化)
@@ -882,10 +988,10 @@ def main():
                 logger.info("密度最適化モードのため構造最適化をスキップ")
             
             # Write to CIF file
-            write_cif(structure, args.output, nmol=nmol, molecules=molecules, structure_id=i + 1)
+            write_cif(structure, args.output, nmol=nmol_used, molecules=molecules, structure_id=i + 1)
             
             # Write structure information to text file
-            write_structure_info(structure, nmol, info_output, molecules=molecules, structure_id=i + 1)
+            write_structure_info(structure, nmol_used, info_output, molecules=molecules, structure_id=i + 1)
         
         logger.info(f"全ての構造生成が完了しました: {args.output}")
         logger.info(f"構造情報ファイル: {info_output}")
